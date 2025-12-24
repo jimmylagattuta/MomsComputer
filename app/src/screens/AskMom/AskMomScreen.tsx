@@ -1,23 +1,178 @@
-import React from "react";
-import { StyleSheet, Text, View } from "react-native";
+// app/src/screens/AskMom/AskMomScreen.tsx
+import { useRouter } from "expo-router";
+import React, { useMemo, useRef, useState } from "react";
+import {
+    Alert,
+    Keyboard,
+    KeyboardAvoidingView,
+    Platform,
+    SafeAreaView,
+    ScrollView,
+    StyleSheet,
+    View,
+} from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-const BRAND = { bg: "#0B1220", text: "#fff", muted: "#A7B0C0" };
+import AskMomHeader from "./components/AskMomHeader";
+import ChatComposer from "./components/ChatComposer";
+import ChatMessageRow from "./components/ChatMessageRow";
+import HomeFooterButton from "./components/HomeFooterButton";
+import type { ChatMessage } from "./components/types";
+import { mockAskMom } from "./mockAskMom";
+import { BRAND, H_PADDING } from "./theme";
+
+function uid() {
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
 
 export default function AskMomScreen() {
+  const router = useRouter();
+  const insets = useSafeAreaInsets();
+
+  const scrollRef = useRef<ScrollView | null>(null);
+
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+
+  const hasConversation = useMemo(() => messages.length > 0, [messages.length]);
+
+  const scrollToBottom = (animated = true) => {
+    requestAnimationFrame(() => {
+      scrollRef.current?.scrollToEnd({ animated });
+    });
+  };
+
+  const handleSend = async () => {
+    const text = input.trim();
+    if (!text) {
+      Alert.alert("Type a message", "Ask anything about what you’re seeing or what happened.");
+      return;
+    }
+
+    // ✅ close keyboard immediately on send (iOS + Android)
+    Keyboard.dismiss();
+
+    setInput("");
+    setLoading(true);
+
+    const userMsg: ChatMessage = { id: uid(), role: "user", text };
+    const thinkingId = uid();
+    const thinkingMsg: ChatMessage = {
+      id: thinkingId,
+      role: "assistant",
+      text: "Thinking…",
+      pending: true,
+    };
+
+    setMessages((prev) => [...prev, userMsg, thinkingMsg]);
+
+    // let layout update then scroll
+    setTimeout(() => scrollToBottom(true), 30);
+
+    // simulate API delay
+    await new Promise((r) => setTimeout(r, 450));
+
+    const response = mockAskMom(text);
+
+    setMessages((prev) =>
+      prev.map((m) => (m.id === thinkingId ? { ...m, text: response, pending: false } : m))
+    );
+
+    setLoading(false);
+
+    setTimeout(() => scrollToBottom(true), 30);
+  };
+
+  const handleClear = () => {
+    Keyboard.dismiss();
+    setInput("");
+    setMessages([]);
+    setLoading(false);
+  };
+
   return (
-    <View style={styles.container}>
-      <Text style={styles.h1}>Ask Mom</Text>
-      <Text style={styles.p}>
-        Paste the message. I’ll tell you what it actually means. (Yes, it’s probably a scam.)
-      </Text>
-      <Text style={styles.note}>Next: input + “Get Guidance” + risk badge + steps.</Text>
-    </View>
+    <SafeAreaView style={styles.page}>
+      <View
+        style={[
+          styles.screen,
+          {
+            paddingTop: 25,
+            // ✅ IMPORTANT: don't add bottom padding here or you'll create a keyboard gap
+            paddingBottom: 0,
+          },
+        ]}
+      >
+        <AskMomHeader />
+
+        {/* ✅ Chat messages scroll area (composer is NOT inside this ScrollView) */}
+        <ScrollView
+          ref={scrollRef}
+          style={{ flex: 1 }}
+          contentContainerStyle={styles.content}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          onContentSizeChange={() => {
+            // feels like ChatGPT: newest stays visible
+            scrollToBottom(true);
+          }}
+        >
+          {hasConversation ? (
+            <View style={styles.conversation}>
+              {messages.map((m) => (
+                <ChatMessageRow key={m.id} msg={m} />
+              ))}
+            </View>
+          ) : (
+            <View style={{ height: 6 }} />
+          )}
+        </ScrollView>
+
+        {/* ✅ Composer attached to keyboard */}
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          // ✅ critical: avoid "mystery gap"
+          keyboardVerticalOffset={0}
+        >
+          <ChatComposer
+            value={input}
+            onChange={setInput}
+            onSend={handleSend}
+            onClear={handleClear}
+            disabled={loading || !input.trim()}
+            loading={loading}
+          />
+        </KeyboardAvoidingView>
+
+        {/* Footer stays below composer */}
+        <HomeFooterButton onPress={() => router.replace("/(app)")} />
+      </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: BRAND.bg, padding: 16, gap: 10 },
-  h1: { color: BRAND.text, fontSize: 22, fontWeight: "900" },
-  p: { color: BRAND.muted, fontSize: 14, lineHeight: 20 },
-  note: { color: BRAND.muted, fontSize: 12 },
+  page: { flex: 1, backgroundColor: BRAND.pageBg },
+
+  screen: {
+    flex: 1,
+    backgroundColor: BRAND.screenBg,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: BRAND.border,
+    paddingHorizontal: H_PADDING,
+  },
+
+  content: {
+    paddingTop: 12,
+    // ✅ keep this small; big bottom padding makes it feel like a gap
+    paddingBottom: 12,
+    gap: 12,
+  },
+
+  conversation: {
+    paddingBottom: 2,
+  },
 });

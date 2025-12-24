@@ -93,7 +93,7 @@ export default function SignInScreen() {
     } catch {
       // ignore for now
     } finally {
-      router.replace("/");
+      router.replace("/(app)");
       // If navigation ever fails, at least unlock after a beat
       setTimeout(() => setIsSigningIn(false), 500);
     }
