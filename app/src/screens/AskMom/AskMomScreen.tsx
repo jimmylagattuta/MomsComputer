@@ -1,6 +1,6 @@
 // app/src/screens/AskMom/AskMomScreen.tsx
 import { useRouter } from "expo-router";
-import React, { useMemo, useRef, useState } from "react";
+import React, { useRef, useState } from "react";
 import {
     Alert,
     Keyboard,
@@ -35,7 +35,8 @@ export default function AskMomScreen() {
   const [loading, setLoading] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
 
-  const hasConversation = useMemo(() => messages.length > 0, [messages.length]);
+  // ✅ Simple + reliable
+  const hasConversation = messages.length > 0;
 
   const scrollToBottom = (animated = true) => {
     requestAnimationFrame(() => {
@@ -113,7 +114,6 @@ export default function AskMomScreen() {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
           onContentSizeChange={() => {
-            // feels like ChatGPT: newest stays visible
             scrollToBottom(true);
           }}
         >
@@ -131,7 +131,6 @@ export default function AskMomScreen() {
         {/* ✅ Composer attached to keyboard */}
         <KeyboardAvoidingView
           behavior={Platform.OS === "ios" ? "padding" : undefined}
-          // ✅ critical: avoid "mystery gap"
           keyboardVerticalOffset={0}
         >
           <ChatComposer
@@ -141,6 +140,8 @@ export default function AskMomScreen() {
             onClear={handleClear}
             disabled={loading || !input.trim()}
             loading={loading}
+            hasConversation={hasConversation} // ✅ FIX: was missing
+            messagesCount={messages.length} // ✅ extra safety (optional, but now supported)
           />
         </KeyboardAvoidingView>
 
@@ -167,7 +168,6 @@ const styles = StyleSheet.create({
 
   content: {
     paddingTop: 12,
-    // ✅ keep this small; big bottom padding makes it feel like a gap
     paddingBottom: 12,
     gap: 12,
   },
