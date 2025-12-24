@@ -3,7 +3,9 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import React from "react";
 import {
+    Alert,
     Image,
+    Linking,
     Pressable,
     SafeAreaView,
     StyleSheet,
@@ -44,6 +46,32 @@ export default function HomeScreen() {
     router.replace("/(auth)/sign-in");
   };
 
+  // ✅ No navigation needed — just confirm + open dialer
+  const MOM_PHONE = "+15625551234"; // TODO: replace with real number
+
+  const handleCallMom = () => {
+    Alert.alert(
+      "Call Mom?",
+      "This will place a phone call using your device.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Call",
+          style: "default",
+          onPress: () => {
+            Linking.openURL(`tel:${MOM_PHONE}`).catch(() => {
+              Alert.alert(
+                "Unable to place call",
+                "Your device couldn’t start a phone call."
+              );
+            });
+          },
+        },
+      ],
+      { cancelable: true }
+    );
+  };
+
   return (
     <SafeAreaView style={styles.page}>
       <View
@@ -82,11 +110,7 @@ export default function HomeScreen() {
           <View style={[styles.row, styles.rowFullBleed]}>
             <View style={styles.bannerRow}>
               <View style={styles.logoBanner} pointerEvents="none">
-                <Image
-                  source={{ uri: LOGO_URI }}
-                  style={styles.logo}
-                  resizeMode="cover"
-                />
+                <Image source={{ uri: LOGO_URI }} style={styles.logo} resizeMode="cover" />
               </View>
             </View>
           </View>
@@ -96,27 +120,17 @@ export default function HomeScreen() {
             <View style={styles.actions}>
               <Pressable
                 onPress={() => router.push("/(app)/ask-mom")}
-                style={({ pressed }) => [
-                  styles.bigBtn,
-                  pressed && styles.bigBtnPressed,
-                ]}
+                style={({ pressed }) => [styles.bigBtn, pressed && styles.bigBtnPressed]}
               >
                 <View style={styles.iconPill}>
-                  <Ionicons
-                    name="chatbubble-ellipses"
-                    size={34}
-                    color={BRAND.blue}
-                  />
+                  <Ionicons name="chatbubble-ellipses" size={34} color={BRAND.blue} />
                 </View>
                 <Text style={styles.bigBtnText}>ASK MOM</Text>
               </Pressable>
 
               <Pressable
                 onPress={() => router.push("/(app)/text-mom")}
-                style={({ pressed }) => [
-                  styles.bigBtn,
-                  pressed && styles.bigBtnPressed,
-                ]}
+                style={({ pressed }) => [styles.bigBtn, pressed && styles.bigBtnPressed]}
               >
                 <View style={styles.iconPill}>
                   <Ionicons name="mail" size={34} color={BRAND.blue} />
@@ -124,12 +138,10 @@ export default function HomeScreen() {
                 <Text style={styles.bigBtnText}>EMAIL / TEXT MOM</Text>
               </Pressable>
 
+              {/* ✅ Call Mom now just confirms + opens dialer (no navigation) */}
               <Pressable
-                onPress={() => router.push("/(app)/call-mom")}
-                style={({ pressed }) => [
-                  styles.bigBtn,
-                  pressed && styles.bigBtnPressed,
-                ]}
+                onPress={handleCallMom}
+                style={({ pressed }) => [styles.bigBtn, pressed && styles.bigBtnPressed]}
               >
                 <View style={styles.iconPill}>
                   <Ionicons name="call" size={34} color={BRAND.blue} />
