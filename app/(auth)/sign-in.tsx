@@ -1,23 +1,25 @@
-// app/(auth)/sign-in.tsx
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
+import * as SecureStore from "expo-secure-store";
 import React, { useEffect, useRef, useState } from "react";
 import {
-    Alert,
-    Animated,
-    Easing,
-    Image,
-    KeyboardAvoidingView,
-    Platform,
-    Pressable,
-    SafeAreaView,
-    StyleSheet,
-    Text,
-    TextInput,
-    View,
+  Alert,
+  Animated,
+  Easing,
+  Image,
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useAuth } from "./../src/auth/AuthProvider";
+import { postJson } from "../src/services/api/client";
 
 const BRAND = {
   pageBg: "#0B1220",
@@ -29,7 +31,6 @@ const BRAND = {
   blueSoft: "#F3F7FF",
   blueBorder: "#D6E6FF",
   inputBg: "#FFFFFF",
-  inputBorder: "#D7DEE8",
 };
 
 const FONT = {
@@ -43,31 +44,37 @@ const LOGO_URI =
 
 export default function SignInScreen() {
   const router = useRouter();
-  const { signInMock } = useAuth();
   const insets = useSafeAreaInsets();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [secure, setSecure] = useState(true);
   const [isSigningIn, setIsSigningIn] = useState(false);
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
 
-  // Animated "fill to the right" + icon travel
-  const fillAnim = useRef(new Animated.Value(0)).current; // 0..1
+  useEffect(() => {
+    const showSub = Keyboard.addListener("keyboardDidShow", () =>
+      setKeyboardOpen(true)
+    );
+    const hideSub = Keyboard.addListener("keyboardDidHide", () =>
+      setKeyboardOpen(false)
+    );
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
+  const fillAnim = useRef(new Animated.Value(0)).current;
   const fillWidth = fillAnim.interpolate({
     inputRange: [0, 1],
     outputRange: ["0%", "100%"],
   });
   const iconTravel = fillAnim.interpolate({
     inputRange: [0, 1],
-    outputRange: [0, 120], // pushes icon right (tuned below via maxWidth)
+    outputRange: [0, 120],
   });
-
-  useEffect(() => {
-    // Reset animation when leaving signing-in state
-    if (!isSigningIn) {
-      fillAnim.setValue(0);
-    }
-  }, [isSigningIn, fillAnim]);
 
   const runFillAnim = () =>
     new Promise<void>((resolve) => {
@@ -76,7 +83,7 @@ export default function SignInScreen() {
         toValue: 1,
         duration: 320,
         easing: Easing.out(Easing.cubic),
-        useNativeDriver: false, // width animation requires false
+        useNativeDriver: false,
       }).start(() => resolve());
     });
 
@@ -87,23 +94,54 @@ export default function SignInScreen() {
       setIsSigningIn(true);
       await runFillAnim();
 
-      if (typeof signInMock === "function") {
-        await signInMock(email, password);
+      const { ok, status, json } = await postJson("/v1/auth/login", {
+        user: {
+          email: email.trim().toLowerCase(),
+          password: password.trim(),
+        },
+      });
+
+      if (!ok) {
+        await SecureStore.deleteItemAsync("auth_token");
+        await SecureStore.deleteItemAsync("auth_user");
+
+        Alert.alert(
+          "Login failed",
+          json?.error ? `${json.error} (HTTP ${status})` : `HTTP ${status}`
+        );
+        return;
       }
-    } catch {
-      // ignore for now
-    } finally {
+
+      const token = String(json?.token || "");
+      if (!token) {
+        Alert.alert("Login failed", "Missing token from server.");
+        return;
+      }
+
+      await SecureStore.setItemAsync("auth_token", token);
+      await SecureStore.setItemAsync(
+        "auth_user",
+        JSON.stringify(json?.user || {})
+      );
+
+      setPassword("");
       router.replace("/(app)");
-      // If navigation ever fails, at least unlock after a beat
-      setTimeout(() => setIsSigningIn(false), 500);
+    } catch {
+      Alert.alert(
+        "Network error",
+        "Could not reach backend. Check LAN IP, Rails bind, and CORS."
+      );
+    } finally {
+      setIsSigningIn(false);
     }
   };
 
   return (
     <SafeAreaView style={styles.page}>
       <KeyboardAvoidingView
-        style={{ flex: 1, width: "100%" }}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        style={{ flex: 1 }}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 0}
       >
         <View
           style={[
@@ -114,82 +152,61 @@ export default function SignInScreen() {
             },
           ]}
         >
-          <View style={styles.main}>
-            {/* LOGO */}
-            <View style={[styles.row, styles.rowFullBleed]}>
-              <View style={styles.bannerRow}>
-                <View style={styles.logoBanner}>
-                  <Image source={{ uri: LOGO_URI }} style={styles.logo} />
-                </View>
+          {/* ✅ Scrollable content so the button stays reachable */}
+          <ScrollView
+            style={{ flex: 1 }}
+            contentContainerStyle={styles.scrollContent}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            <View style={styles.main}>
+              {/* Logo */}
+              <View style={styles.logoBanner}>
+                <Image source={{ uri: LOGO_URI }} style={styles.logo} />
               </View>
-            </View>
 
-            {/* FORM */}
-            <View style={styles.formWrap}>
+              {/* Form */}
               <View style={styles.form}>
-                <View style={styles.head}>
-                  <Text style={styles.title}>Sign In</Text>
-                  <Text style={styles.subtitle}>Welcome back</Text>
-                </View>
+                <Text style={styles.title}>Sign In</Text>
+                <Text style={styles.subtitle}>Welcome back</Text>
 
+                {/* Email */}
                 <View style={styles.field}>
                   <Text style={styles.label}>Email</Text>
                   <View style={styles.inputRow}>
-                    <View style={styles.leftIconPill}>
-                      <Ionicons name="mail" size={22} color={BRAND.blue} />
-                    </View>
+                    <Ionicons name="mail" size={22} color={BRAND.blue} />
                     <TextInput
                       value={email}
                       onChangeText={setEmail}
                       placeholder="you@example.com"
-                      placeholderTextColor={BRAND.muted}
                       autoCapitalize="none"
                       keyboardType="email-address"
                       style={styles.input}
                       editable={!isSigningIn}
+                      returnKeyType="next"
                     />
                   </View>
                 </View>
 
+                {/* Password */}
                 <View style={styles.field}>
-                  <View style={styles.labelRow}>
-                    <Text style={styles.label}>Password</Text>
-                    <Pressable
-                      onPress={() =>
-                        Alert.alert("Coming soon", "Password reset soon.")
-                      }
-                      style={({ pressed }) => pressed && { opacity: 0.75 }}
-                      disabled={isSigningIn}
-                    >
-                      <Text style={styles.link}>Forgot?</Text>
-                    </Pressable>
-                  </View>
-
+                  <Text style={styles.label}>Password</Text>
                   <View style={styles.inputRow}>
-                    <View style={styles.leftIconPill}>
-                      <Ionicons
-                        name="lock-closed"
-                        size={22}
-                        color={BRAND.blue}
-                      />
-                    </View>
-
+                    <Ionicons name="lock-closed" size={22} color={BRAND.blue} />
                     <TextInput
                       value={password}
                       onChangeText={setPassword}
-                      placeholder="••••••••"
-                      placeholderTextColor={BRAND.muted}
                       secureTextEntry={secure}
+                      placeholder="••••••••"
                       style={styles.input}
-                      onSubmitEditing={handleSignIn}
                       editable={!isSigningIn}
+                      onSubmitEditing={handleSignIn}
+                      returnKeyType="go"
                     />
-
                     <Pressable
                       onPress={() => setSecure((s) => !s)}
-                      style={styles.rightIconBtn}
-                      hitSlop={10}
                       disabled={isSigningIn}
+                      hitSlop={10}
                     >
                       <Ionicons
                         name={secure ? "eye" : "eye-off"}
@@ -200,76 +217,73 @@ export default function SignInScreen() {
                   </View>
                 </View>
 
-                {/* ✅ Fill-to-right Sign In */}
+                {/* Sign In Button */}
                 <Pressable
                   onPress={handleSignIn}
-                  hitSlop={12}
                   disabled={isSigningIn}
                   style={({ pressed }) => [
                     styles.primaryBtn,
-                    pressed && !isSigningIn && styles.primaryBtnPressed,
-                    isSigningIn && styles.primaryBtnSigning,
+                    pressed && !isSigningIn ? { opacity: 0.9 } : null,
+                    isSigningIn ? { opacity: 0.95 } : null,
                   ]}
                 >
-                  {/* Animated blue fill that grows to the right */}
                   <Animated.View
                     pointerEvents="none"
                     style={[styles.primaryFill, { width: fillWidth }]}
                   />
-
-                  {/* Content row */}
                   <View style={styles.primaryInner} pointerEvents="none">
-                    {/* The icon "travels" to the right with the fill */}
-                    <Animated.View
-                      style={[
-                        styles.primaryIconPill,
-                        { transform: [{ translateX: iconTravel }] },
-                      ]}
-                    >
-                      {/* “walking in” vibe */}
-                      <Ionicons
-                        name="walk"
-                        size={22}
-                        color={isSigningIn ? "#FFFFFF" : BRAND.blue}
-                        style={
-                          isSigningIn ? undefined : { transform: [{ scaleX: 1 }] }
-                        }
-                      />
-                    </Animated.View>
+                    {isSigningIn ? (
+                      // ⏳ Signing in: ONLY walking icon, centered
+                      <Animated.View
+                        style={[
+                          styles.primaryIconPill,
+                          {
+                            transform: [{ translateX: iconTravel }],
+                            marginHorizontal: "auto",
+                          },
+                        ]}
+                      >
+                        <Ionicons name="walk" size={22} color="#FFFFFF" />
+                      </Animated.View>
+                    ) : (
+                      // ✅ Idle: normal button content
+                      <>
+                        <View style={styles.primaryInner}>
+                          <Ionicons name="walk" size={22} color={BRAND.blue} />
+                        </View>
 
-                    <Text
-                      style={[
-                        styles.primaryBtnText,
-                        isSigningIn && styles.primaryBtnTextSigning,
-                      ]}
-                    >
-                      SIGN IN
-                    </Text>
+                        <Text style={styles.primaryText}>SIGN IN</Text>
 
-                    <Ionicons
-                      name="chevron-forward"
-                      size={18}
-                      color={isSigningIn ? "#FFFFFF" : BRAND.blue}
-                      style={{ opacity: isSigningIn ? 0.95 : 0.7 }}
-                    />
+                        <Ionicons
+                          name="chevron-forward"
+                          size={18}
+                          color={BRAND.blue}
+                          style={{ opacity: 0.7 }}
+                        />
+                      </>
+                    )}
                   </View>
+
                 </Pressable>
               </View>
-            </View>
-          </View>
 
-          <View style={styles.footer}>
-            <Ionicons name="shield-checkmark" size={22} color={BRAND.blue} />
-            <Text style={styles.footerText}>Scam Helpline</Text>
-          </View>
+              {/* Spacer so button isn’t jammed against bottom */}
+              <View style={{ height: 18 }} />
+            </View>
+          </ScrollView>
+
+          {/* Footer – hidden when keyboard is open */}
+          {!keyboardOpen && (
+            <View style={styles.footer}>
+              <Ionicons name="shield-checkmark" size={22} color={BRAND.blue} />
+              <Text style={styles.footerText}>Scam Helpline</Text>
+            </View>
+          )}
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
-
-const H_PADDING = 18;
-const LOGO_ASPECT_RATIO = 2.32;
 
 const styles = StyleSheet.create({
   page: { flex: 1, backgroundColor: BRAND.pageBg },
@@ -279,28 +293,27 @@ const styles = StyleSheet.create({
     backgroundColor: BRAND.screenBg,
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
-    borderWidth: 1,
-    borderColor: BRAND.border,
-    paddingHorizontal: H_PADDING,
+    paddingHorizontal: 18,
   },
 
-  main: { flex: 1 },
+  scrollContent: {
+    flexGrow: 1,
+    justifyContent: "center", // keeps it centered when keyboard is NOT up
+  },
 
-  row: { width: "100%" },
-  rowFullBleed: { alignSelf: "stretch" },
-  bannerRow: { width: "100%" },
+  main: {
+    width: "100%",
+  },
 
   logoBanner: {
-    marginLeft: -H_PADDING,
-    marginRight: -H_PADDING,
-    aspectRatio: LOGO_ASPECT_RATIO,
+    width: "100%",
+    aspectRatio: 2.3,
+    marginBottom: 12,
     borderRadius: 14,
     overflow: "hidden",
   },
 
   logo: { width: "100%", height: "100%" },
-
-  formWrap: { flex: 1, justifyContent: "center" },
 
   form: {
     borderWidth: 1,
@@ -309,100 +322,48 @@ const styles = StyleSheet.create({
     padding: 18,
   },
 
-  head: { marginBottom: 14 },
-
-  title: {
-    fontFamily: FONT.semi,
-    fontSize: 26,
-    color: BRAND.text,
-  },
-
+  title: { fontSize: 26, fontFamily: FONT.semi, color: BRAND.text },
   subtitle: {
-    fontFamily: FONT.regular,
-    fontSize: 14,
     color: BRAND.muted,
+    marginTop: 4,
+    marginBottom: 12,
+    fontFamily: FONT.regular,
   },
 
   field: { marginTop: 12 },
 
-  labelRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-
-  label: {
-    fontFamily: FONT.medium,
-    fontSize: 13,
-    color: BRAND.text,
-  },
-
-  link: {
-    fontFamily: FONT.medium,
-    fontSize: 13,
-    color: BRAND.blue,
-  },
+  label: { fontSize: 13, fontFamily: FONT.medium, color: BRAND.text },
 
   inputRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 12,
+    gap: 10,
     borderWidth: 1,
     borderColor: BRAND.border,
     borderRadius: 18,
-    paddingVertical: Platform.OS === "ios" ? 16 : 12,
     paddingHorizontal: 14,
+    paddingVertical: Platform.OS === "ios" ? 14 : 10,
     backgroundColor: BRAND.inputBg,
-  },
-
-  leftIconPill: {
-    width: 48,
-    height: 48,
-    borderRadius: 16,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: BRAND.blueSoft,
-    borderWidth: 1,
-    borderColor: BRAND.blueBorder,
+    marginTop: 8,
   },
 
   input: {
     flex: 1,
-    fontFamily: FONT.regular,
     fontSize: 16,
     color: BRAND.text,
+    fontFamily: FONT.regular,
     paddingVertical: 0,
   },
 
-  rightIconBtn: { padding: 6, borderRadius: 12 },
-
-  /* ✅ Fill-to-right button */
   primaryBtn: {
-    marginTop: 14,
-    alignSelf: "center",
-    borderWidth: 1,
-    borderColor: BRAND.blueBorder,
+    marginTop: 16,
     borderRadius: 999,
     backgroundColor: BRAND.blueSoft,
     overflow: "hidden",
-
-    shadowColor: "#000",
-    shadowOpacity: 0.08,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 2,
+    borderWidth: 1,
+    borderColor: BRAND.blueBorder,
   },
 
-  primaryBtnPressed: {
-    transform: [{ scale: 0.98 }],
-    opacity: 0.92,
-  },
-
-  primaryBtnSigning: {
-    borderColor: BRAND.blue,
-  },
-
-  // Blue fill layer
   primaryFill: {
     position: "absolute",
     left: 0,
@@ -412,49 +373,44 @@ const styles = StyleSheet.create({
     opacity: 0.95,
   },
 
-  // Content padding stays consistent while fill animates underneath
   primaryInner: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
-    paddingVertical: 12,
+    justifyContent: "center",
+    paddingVertical: 14,
     paddingHorizontal: 16,
+    gap: 10,
   },
 
-  primaryIconPill: {
-    width: 38,
-    height: 38,
-    borderRadius: 999,
+  primaryIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "#FFF",
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#FFFFFF",
     borderWidth: 1,
     borderColor: BRAND.blueBorder,
-    overflow: "hidden",
   },
 
-  primaryBtnText: {
+  primaryText: {
     fontFamily: FONT.medium,
     fontSize: 16,
-    letterSpacing: 0.8,
+    letterSpacing: 1,
     color: BRAND.text,
-  },
-
-  primaryBtnTextSigning: {
-    color: "#FFFFFF",
   },
 
   footer: {
     alignItems: "center",
-    paddingVertical: 8,
+    paddingVertical: 10,
     borderTopWidth: 1,
     borderTopColor: "#EEF2F7",
     gap: 4,
   },
 
   footerText: {
-    fontFamily: FONT.regular,
     fontSize: 14,
     color: BRAND.muted,
+    fontFamily: FONT.regular,
   },
 });
