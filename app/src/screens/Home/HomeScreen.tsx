@@ -1,19 +1,20 @@
-// app/src/screens/Home/HomeScreen.tsx
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import React from "react";
+import * as SecureStore from "expo-secure-store";
+import React, { useState } from "react";
 import {
-    Alert,
-    Image,
-    Linking,
-    Pressable,
-    SafeAreaView,
-    StyleSheet,
-    Text,
-    View,
+  Alert,
+  Image,
+  Linking,
+  Pressable,
+  SafeAreaView,
+  StyleSheet,
+  Text,
+  View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../../auth/AuthProvider";
+import { postJson } from "../../services/api/client";
 
 const BRAND = {
   pageBg: "#0B1220",
@@ -26,7 +27,6 @@ const BRAND = {
   blueBorder: "#D6E6FF",
 };
 
-// Thin, clean typography (make sure these are loaded via expo-font)
 const FONT = {
   regular: "Inter-Regular",
   medium: "Inter-Medium",
@@ -40,13 +40,43 @@ export default function HomeScreen() {
   const router = useRouter();
   const { signOut } = useAuth();
   const insets = useSafeAreaInsets();
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
 
-  const handleLogout = async () => {
-    await signOut();
-    router.replace("/(auth)/sign-in");
+  const handleLogout = () => {
+    if (isLoggingOut) return;
+
+    Alert.alert(
+      "Log out?",
+      "You’ll need to sign in again to use Ask Mom.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Log out",
+          style: "destructive",
+          onPress: async () => {
+            setIsLoggingOut(true);
+            try {
+              const token = await SecureStore.getItemAsync("auth_token");
+
+              // Best-effort backend revoke (don’t block logout on network errors)
+              if (token) {
+                try {
+                  await postJson("/v1/auth/logout", {}, token);
+                } catch {}
+              }
+
+              await signOut();
+              router.replace("/(auth)/sign-in");
+            } finally {
+              setIsLoggingOut(false);
+            }
+          },
+        },
+      ],
+      { cancelable: true }
+    );
   };
 
-  // ✅ No navigation needed — just confirm + open dialer
   const MOM_PHONE = "+15625551234"; // TODO: replace with real number
 
   const handleCallMom = () => {
@@ -83,15 +113,16 @@ export default function HomeScreen() {
           },
         ]}
       >
-        {/* Top utility row */}
         <View style={styles.topBar}>
           <View style={{ flex: 1 }} />
           <Pressable
             onPress={handleLogout}
+            disabled={isLoggingOut}
             hitSlop={12}
             style={({ pressed }) => [
               styles.logoutChip,
-              pressed && styles.logoutChipPressed,
+              pressed && !isLoggingOut && styles.logoutChipPressed,
+              isLoggingOut && { opacity: 0.6 },
             ]}
           >
             <Ionicons
@@ -104,33 +135,44 @@ export default function HomeScreen() {
           </Pressable>
         </View>
 
-        {/* MAIN */}
         <View style={styles.main}>
-          {/* LOGO */}
           <View style={[styles.row, styles.rowFullBleed]}>
             <View style={styles.bannerRow}>
               <View style={styles.logoBanner} pointerEvents="none">
-                <Image source={{ uri: LOGO_URI }} style={styles.logo} resizeMode="cover" />
+                <Image
+                  source={{ uri: LOGO_URI }}
+                  style={styles.logo}
+                  resizeMode="cover"
+                />
               </View>
             </View>
           </View>
 
-          {/* ACTIONS (centered between logo and footer) */}
           <View style={styles.actionsWrap}>
             <View style={styles.actions}>
               <Pressable
                 onPress={() => router.push("/(app)/ask-mom")}
-                style={({ pressed }) => [styles.bigBtn, pressed && styles.bigBtnPressed]}
+                style={({ pressed }) => [
+                  styles.bigBtn,
+                  pressed && styles.bigBtnPressed,
+                ]}
               >
                 <View style={styles.iconPill}>
-                  <Ionicons name="chatbubble-ellipses" size={34} color={BRAND.blue} />
+                  <Ionicons
+                    name="chatbubble-ellipses"
+                    size={34}
+                    color={BRAND.blue}
+                  />
                 </View>
                 <Text style={styles.bigBtnText}>ASK MOM</Text>
               </Pressable>
 
               <Pressable
                 onPress={() => router.push("/(app)/text-mom")}
-                style={({ pressed }) => [styles.bigBtn, pressed && styles.bigBtnPressed]}
+                style={({ pressed }) => [
+                  styles.bigBtn,
+                  pressed && styles.bigBtnPressed,
+                ]}
               >
                 <View style={styles.iconPill}>
                   <Ionicons name="mail" size={34} color={BRAND.blue} />
@@ -138,10 +180,12 @@ export default function HomeScreen() {
                 <Text style={styles.bigBtnText}>EMAIL / TEXT MOM</Text>
               </Pressable>
 
-              {/* ✅ Call Mom now just confirms + opens dialer (no navigation) */}
               <Pressable
                 onPress={handleCallMom}
-                style={({ pressed }) => [styles.bigBtn, pressed && styles.bigBtnPressed]}
+                style={({ pressed }) => [
+                  styles.bigBtn,
+                  pressed && styles.bigBtnPressed,
+                ]}
               >
                 <View style={styles.iconPill}>
                   <Ionicons name="call" size={34} color={BRAND.blue} />
@@ -152,7 +196,6 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        {/* FOOTER */}
         <View style={styles.footer}>
           <Ionicons name="home" size={24} color={BRAND.blue} />
           <Text style={styles.footerText}>Home</Text>
@@ -166,10 +209,7 @@ const H_PADDING = 18;
 const LOGO_ASPECT_RATIO = 2.32;
 
 const styles = StyleSheet.create({
-  page: {
-    flex: 1,
-    backgroundColor: BRAND.pageBg,
-  },
+  page: { flex: 1, backgroundColor: BRAND.pageBg },
 
   screen: {
     flex: 1,
@@ -213,24 +253,13 @@ const styles = StyleSheet.create({
     letterSpacing: 0.35,
   },
 
-  main: {
-    flex: 1,
-    justifyContent: "flex-start",
-  },
+  main: { flex: 1, justifyContent: "flex-start" },
 
-  row: {
-    width: "100%",
-    alignItems: "center",
-  },
+  row: { width: "100%", alignItems: "center" },
 
-  rowFullBleed: {
-    alignSelf: "stretch",
-    alignItems: "stretch",
-  },
+  rowFullBleed: { alignSelf: "stretch", alignItems: "stretch" },
 
-  bannerRow: {
-    width: "100%",
-  },
+  bannerRow: { width: "100%" },
 
   logoBanner: {
     marginLeft: -H_PADDING,
@@ -242,20 +271,11 @@ const styles = StyleSheet.create({
     borderRadius: 14,
   },
 
-  logo: {
-    width: "100%",
-    height: "100%",
-  },
+  logo: { width: "100%", height: "100%" },
 
-  actionsWrap: {
-    flex: 1,
-    justifyContent: "center",
-  },
+  actionsWrap: { flex: 1, justifyContent: "center" },
 
-  actions: {
-    width: "100%",
-    gap: 12,
-  },
+  actions: { width: "100%", gap: 12 },
 
   bigBtn: {
     width: "100%",
@@ -268,7 +288,6 @@ const styles = StyleSheet.create({
     paddingVertical: 28,
     paddingHorizontal: 20,
     backgroundColor: "#FFFFFF",
-
     shadowColor: "#000",
     shadowOpacity: 0.08,
     shadowRadius: 10,
@@ -276,10 +295,7 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
 
-  bigBtnPressed: {
-    transform: [{ scale: 0.99 }],
-    opacity: 0.98,
-  },
+  bigBtnPressed: { transform: [{ scale: 0.99 }], opacity: 0.98 },
 
   iconPill: {
     width: 64,

@@ -19,6 +19,7 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useAuth } from "../src/auth/AuthProvider";
 import { postJson } from "../src/services/api/client";
 
 const BRAND = {
@@ -45,6 +46,7 @@ const LOGO_URI =
 export default function SignInScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { signIn } = useAuth();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -124,6 +126,9 @@ export default function SignInScreen() {
         JSON.stringify(json?.user || {})
       );
 
+      // ✅ THIS is what stops the "bounce back to sign-in"
+      await signIn();
+
       setPassword("");
       router.replace("/(app)");
     } catch {
@@ -152,7 +157,6 @@ export default function SignInScreen() {
             },
           ]}
         >
-          {/* ✅ Scrollable content so the button stays reachable */}
           <ScrollView
             style={{ flex: 1 }}
             contentContainerStyle={styles.scrollContent}
@@ -160,17 +164,14 @@ export default function SignInScreen() {
             showsVerticalScrollIndicator={false}
           >
             <View style={styles.main}>
-              {/* Logo */}
               <View style={styles.logoBanner}>
                 <Image source={{ uri: LOGO_URI }} style={styles.logo} />
               </View>
 
-              {/* Form */}
               <View style={styles.form}>
                 <Text style={styles.title}>Sign In</Text>
                 <Text style={styles.subtitle}>Welcome back</Text>
 
-                {/* Email */}
                 <View style={styles.field}>
                   <Text style={styles.label}>Email</Text>
                   <View style={styles.inputRow}>
@@ -188,7 +189,6 @@ export default function SignInScreen() {
                   </View>
                 </View>
 
-                {/* Password */}
                 <View style={styles.field}>
                   <Text style={styles.label}>Password</Text>
                   <View style={styles.inputRow}>
@@ -217,7 +217,6 @@ export default function SignInScreen() {
                   </View>
                 </View>
 
-                {/* Sign In Button */}
                 <Pressable
                   onPress={handleSignIn}
                   disabled={isSigningIn}
@@ -233,7 +232,6 @@ export default function SignInScreen() {
                   />
                   <View style={styles.primaryInner} pointerEvents="none">
                     {isSigningIn ? (
-                      // ⏳ Signing in: ONLY walking icon, centered
                       <Animated.View
                         style={[
                           styles.primaryIconPill,
@@ -246,7 +244,6 @@ export default function SignInScreen() {
                         <Ionicons name="walk" size={22} color="#FFFFFF" />
                       </Animated.View>
                     ) : (
-                      // ✅ Idle: normal button content
                       <>
                         <View style={styles.primaryInner}>
                           <Ionicons name="walk" size={22} color={BRAND.blue} />
@@ -263,16 +260,13 @@ export default function SignInScreen() {
                       </>
                     )}
                   </View>
-
                 </Pressable>
               </View>
 
-              {/* Spacer so button isn’t jammed against bottom */}
               <View style={{ height: 18 }} />
             </View>
           </ScrollView>
 
-          {/* Footer – hidden when keyboard is open */}
           {!keyboardOpen && (
             <View style={styles.footer}>
               <Ionicons name="shield-checkmark" size={22} color={BRAND.blue} />
@@ -298,7 +292,7 @@ const styles = StyleSheet.create({
 
   scrollContent: {
     flexGrow: 1,
-    justifyContent: "center", // keeps it centered when keyboard is NOT up
+    justifyContent: "center",
   },
 
   main: {

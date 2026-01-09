@@ -65,11 +65,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const signOut = async () => {
-    await AsyncStorage.removeItem(STORAGE_KEY);
-    await SecureStore.deleteItemAsync("auth_token");
-    await SecureStore.deleteItemAsync("auth_user");
-    setIsAuthed(false);
+    // Add any “per-user app cache” keys here as you create them.
+    // (Safe to include keys even if they don’t exist yet.)
+    const APP_CACHE_KEYS = [
+      STORAGE_KEY,
+      "momscomputer:conversation_id",
+      "momscomputer:last_channel",
+      "momscomputer:ask_mom:draft",
+    ];
+
+    try {
+      // 1) AsyncStorage: remove session + app caches
+      await AsyncStorage.multiRemove(APP_CACHE_KEYS);
+
+      // 2) SecureStore: remove auth secrets
+      // (Wrap individually so one failure doesn't block logout)
+      try { await SecureStore.deleteItemAsync("auth_token"); } catch { }
+      try { await SecureStore.deleteItemAsync("auth_user"); } catch { }
+    } finally {
+      // 3) Always flip state even if storage operations throw
+      setIsAuthed(false);
+    }
   };
+
 
   const value = useMemo(
     () => ({ isAuthed, isBooting, signIn, signInMock, signOut }),
