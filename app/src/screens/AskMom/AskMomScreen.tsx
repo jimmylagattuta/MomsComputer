@@ -105,6 +105,22 @@ export default function AskMomScreen() {
     Alert.alert(title, clipped, [{ text: "OK" }], { cancelable: true });
   };
 
+  const showLlmTriggerAlertIfNeeded = (res: any) => {
+    if (!DEMO_MODE) return;
+
+    const recommended = !!res?.llm_recommended;
+    if (!recommended) return;
+
+    const reason = (res?.llm_reason ?? "").toString().trim() || "no_reason_provided";
+
+    Alert.alert(
+      "DEMO MODE — LLM would trigger",
+      `Backend flagged this message as LLM-worthy.\n\nReason: ${reason}`,
+      [{ text: "OK" }],
+      { cancelable: true }
+    );
+  };
+
   const handleSend = async () => {
     const text = input.trim();
     if (!text) {
@@ -145,6 +161,9 @@ export default function AskMomScreen() {
 
       // ✅ Debug: show exactly what came back
       showDemoAlert("DEMO MODE — Raw /v1/ask_mom response", res);
+
+      // ✅ DEV: LLM trigger alert (only if backend recommends)
+      showLlmTriggerAlertIfNeeded(res);
 
       if (!conversationId) setConversationId(res.conversation_id);
 
@@ -223,7 +242,7 @@ export default function AskMomScreen() {
               onPress={() =>
                 Alert.alert(
                   "Demo Mode is ON",
-                  "This will show alerts with the raw API response and what the UI is about to render.",
+                  "This will show alerts with the raw API response, the rendered assistant text, and an alert if the backend says it’s LLM time.",
                   [{ text: "OK" }]
                 )
               }
