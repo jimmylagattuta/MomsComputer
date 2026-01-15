@@ -34,7 +34,6 @@ export async function askMom(
     token
   )) as PostJsonEnvelope<AskMomResponse>;
 
-  // optional but helpful if the server ever changes / returns errors
   if (!res.ok) {
     throw new Error(`AskMom failed (${res.status})`);
   }

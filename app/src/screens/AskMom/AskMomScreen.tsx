@@ -6,11 +6,9 @@ import {
   Keyboard,
   KeyboardAvoidingView,
   Platform,
-  Pressable,
   SafeAreaView,
   ScrollView,
   StyleSheet,
-  Text,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -24,9 +22,6 @@ import { BRAND, H_PADDING } from "./theme";
 
 import { askMom } from "../../services/api/askMom";
 
-// ✅ Flip this on/off when you want to see what the phone is receiving.
-const DEMO_MODE = true;
-
 function uid() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
@@ -39,14 +34,6 @@ function formatAssistantText(summary: string, steps: string[]) {
     steps.forEach((s, i) => lines.push(`${i + 1}. ${s}`));
   }
   return lines.join("\n");
-}
-
-function safeStringify(obj: any) {
-  try {
-    return JSON.stringify(obj, null, 2);
-  } catch {
-    return String(obj);
-  }
 }
 
 export default function AskMomScreen() {
@@ -92,35 +79,6 @@ export default function AskMomScreen() {
     }
   };
 
-  const showDemoAlert = (title: string, payload: any) => {
-    if (!DEMO_MODE) return;
-
-    const body = typeof payload === "string" ? payload : safeStringify(payload);
-
-    // Alerts have practical length limits; keep it readable.
-    const maxLen = 3500;
-    const clipped =
-      body.length > maxLen ? body.slice(0, maxLen) + "\n…(clipped)" : body;
-
-    Alert.alert(title, clipped, [{ text: "OK" }], { cancelable: true });
-  };
-
-  const showLlmTriggerAlertIfNeeded = (res: any) => {
-    if (!DEMO_MODE) return;
-
-    const recommended = !!res?.llm_recommended;
-    if (!recommended) return;
-
-    const reason = (res?.llm_reason ?? "").toString().trim() || "no_reason_provided";
-
-    Alert.alert(
-      "DEMO MODE — LLM would trigger",
-      `Backend flagged this message as LLM-worthy.\n\nReason: ${reason}`,
-      [{ text: "OK" }],
-      { cancelable: true }
-    );
-  };
-
   const handleSend = async () => {
     const text = input.trim();
     if (!text) {
@@ -150,32 +108,13 @@ export default function AskMomScreen() {
 
     startThinkingAnimation(thinkingId);
 
-    // ⏳ Min delay so it feels intentional (keep your vibe)
-    const minThinkingMs = 900;
-    const jitterMs = Math.floor(Math.random() * 500);
-    await new Promise((r) => setTimeout(r, minThinkingMs + jitterMs));
-
     try {
-      // ✅ Call backend
+      // ✅ Call backend (no artificial delay)
       const res = await askMom(text, conversationId);
-
-      // ✅ Debug: show exactly what came back
-      showDemoAlert("DEMO MODE — Raw /v1/ask_mom response", res);
-
-      // ✅ DEV: LLM trigger alert (only if backend recommends)
-      showLlmTriggerAlertIfNeeded(res);
 
       if (!conversationId) setConversationId(res.conversation_id);
 
       const assistantText = formatAssistantText(res.summary, res.steps);
-
-      // ✅ Debug: show what we’re about to render
-      showDemoAlert("DEMO MODE — Rendered assistantText", {
-        summary: res.summary,
-        steps: res.steps,
-        assistantText,
-        assistantText_length: assistantText?.length ?? 0,
-      });
 
       stopThinkingAnimation();
       setMessages((prev) =>
@@ -192,13 +131,6 @@ export default function AskMomScreen() {
       }
     } catch (e: any) {
       stopThinkingAnimation();
-
-      showDemoAlert("DEMO MODE — Ask Mom error", {
-        message: e?.message,
-        name: e?.name,
-        stack: e?.stack,
-        raw: String(e),
-      });
 
       setMessages((prev) =>
         prev.map((m) =>
@@ -236,25 +168,6 @@ export default function AskMomScreen() {
       <View style={[styles.screen, { paddingTop: 25, paddingBottom: 0 }]}>
         <View style={styles.headerRow}>
           <AskMomHeader />
-
-          {DEMO_MODE ? (
-            <Pressable
-              onPress={() =>
-                Alert.alert(
-                  "Demo Mode is ON",
-                  "This will show alerts with the raw API response, the rendered assistant text, and an alert if the backend says it’s LLM time.",
-                  [{ text: "OK" }]
-                )
-              }
-              style={({ pressed }) => [
-                styles.demoChip,
-                pressed && { opacity: 0.85, transform: [{ scale: 0.99 }] },
-              ]}
-              hitSlop={12}
-            >
-              <Text style={styles.demoChipText}>DEMO</Text>
-            </Pressable>
-          ) : null}
         </View>
 
         <ScrollView
@@ -316,24 +229,6 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-  },
-
-  demoChip: {
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    borderRadius: 999,
-    backgroundColor: BRAND.blueSoft,
-    borderWidth: 1,
-    borderColor: BRAND.blueBorder,
-    alignSelf: "flex-start",
-    marginTop: 2,
-  },
-
-  demoChipText: {
-    color: BRAND.blue,
-    fontSize: 12,
-    letterSpacing: 1.2,
-    fontWeight: "700",
   },
 
   content: {

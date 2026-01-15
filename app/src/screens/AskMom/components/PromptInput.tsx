@@ -28,7 +28,19 @@ export default function PromptInput({
         multiline
         textAlignVertical="top"
         style={styles.textarea}
+
+        // 🔒 reduce iOS interventions
+        autoCorrect={false}
+        spellCheck={false}
+        autoCapitalize="none"
+        autoComplete="off"
+        textContentType="none"
+
+        // 🫥 hide the long-press menu where Writing Tools usually lives
+        contextMenuHidden={true}
       />
+
+
 
       <View style={styles.row}>
         <Pressable
