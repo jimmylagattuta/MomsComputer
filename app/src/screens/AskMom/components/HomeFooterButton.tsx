@@ -20,11 +20,13 @@ const styles = StyleSheet.create({
   footer: {
     alignItems: "center",
     justifyContent: "center",
-    paddingTop: 10,
-    paddingBottom: 15,
+    // ✅ reduce vertical space
+    paddingTop: 6,
+    paddingBottom: 2,
     borderTopWidth: 1,
     borderTopColor: "#EEF2F7",
-    gap: 4,
+    // ✅ reduce gap between icon + label
+    gap: 2,
   },
   footerPressed: { opacity: 0.9, transform: [{ scale: 0.99 }] },
   footerText: {

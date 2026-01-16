@@ -133,13 +133,8 @@ export default function AskMomScreen() {
   };
 
   const handleSelectConversation = async (id: number) => {
-    // Close drawer immediately so it feels snappy
     setDrawerOpen(false);
-
-    // Stop any pending thinking state
     stopThinkingAnimation();
-
-    // Show loading state using the existing flag (disables send button too)
     setLoading(true);
 
     try {
@@ -152,7 +147,6 @@ export default function AskMomScreen() {
       const mapped: ChatMessage[] = (detail.messages || [])
         .filter((m) => (m?.content || "").trim().length > 0)
         .map((m) => ({
-          // keep stable id, but ChatMessageRow expects string
           id: String(m.id),
           role: roleFromSenderType(String(m.sender_type || "")) as any,
           text: String(m.content || ""),
@@ -161,7 +155,6 @@ export default function AskMomScreen() {
 
       setMessages(mapped);
 
-      // Scroll down after render
       setTimeout(() => scrollToBottom(false), 50);
     } catch (e: any) {
       console.log("LOAD CONVERSATION FAILED (AskMomScreen)", e);
@@ -219,7 +212,6 @@ export default function AskMomScreen() {
         )
       );
 
-      // Refresh drawer list after a new message (so title/risk/last_message updates)
       try {
         const updated = await fetchConversations();
         setConversations(updated);
@@ -234,11 +226,11 @@ export default function AskMomScreen() {
         prev.map((m) =>
           m.id === thinkingId
             ? {
-              ...m,
-              text:
-                "I couldn’t reach the server right now. Please try again.\n\n(If this is urgent or involves money/codes, don’t proceed—tell me what it said.)",
-              pending: false,
-            }
+                ...m,
+                text:
+                  "I couldn’t reach the server right now. Please try again.\n\n(If this is urgent or involves money/codes, don’t proceed—tell me what it said.)",
+                pending: false,
+              }
             : m
         )
       );
@@ -261,85 +253,91 @@ export default function AskMomScreen() {
     return () => stopThinkingAnimation();
   }, []);
 
-  // Android bottom nav safety padding
+  // Android bottom nav safety padding (trimmed a bit)
   const footerSafePad =
-    Platform.OS === "android" ? Math.max(insets.bottom, 14) : insets.bottom;
+    Platform.OS === "android" ? Math.max(insets.bottom, 8) : insets.bottom;
 
   const showHomeFooter = !keyboardOpen;
 
   const scrollBottomPad = showHomeFooter
-    ? 12 + footerSafePad + 64 + 110
-    : 12 + 110;
+    ? 12 + footerSafePad + 50 + 96
+    : 12 + 96;
 
   return (
     <SafeAreaView style={styles.page}>
-      <View style={[styles.screen, { paddingTop: 25, paddingBottom: 0 }]}>
-        {/* ✅ Drawer overlay */}
-        <HistoryDrawer
-          open={drawerOpen}
-          onClose={() => setDrawerOpen(false)}
-          conversations={conversations}
-          onSelectConversation={handleSelectConversation}
-          onUpdateConversations={setConversations}
-        />
-
-
-        <View style={styles.headerRow}>
-          <AskMomHeader onOpenHistory={() => setDrawerOpen(true)} />
-        </View>
-
-        <ScrollView
-          ref={scrollRef}
-          style={{ flex: 1 }}
-          contentContainerStyle={[
-            styles.content,
-            { paddingBottom: scrollBottomPad },
-          ]}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-          onContentSizeChange={() => scrollToBottom(true)}
-        >
-          {hasConversation ? (
-            <View style={styles.conversation}>
-              {messages.map((m) => (
-                <ChatMessageRow key={m.id} msg={m} />
-              ))}
-            </View>
-          ) : (
-            <View style={{ height: 6 }} />
-          )}
-        </ScrollView>
-
-        <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : "height"}
-          keyboardVerticalOffset={0}
-        >
-          <ChatComposer
-            value={input}
-            onChange={setInput}
-            onSend={handleSend}
-            onClear={handleClear}
-            disabled={loading || !input.trim()}
-            loading={loading}
-            hasConversation={hasConversation}
-            messagesCount={messages.length}
+      {/* ✅ Wrap the WHOLE screen so Android "resizes" the layout like iOS */}
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={0}
+      >
+        <View style={[styles.screen, { paddingTop: 25, paddingBottom: 0 }]}>
+          {/* ✅ Drawer overlay */}
+          <HistoryDrawer
+            open={drawerOpen}
+            onClose={() => setDrawerOpen(false)}
+            conversations={conversations}
+            onSelectConversation={handleSelectConversation}
+            onUpdateConversations={setConversations}
           />
 
-          {showHomeFooter ? (
-            <View style={{ paddingBottom: footerSafePad }}>
-              <HomeFooterButton onPress={() => router.replace("/(app)")} />
-            </View>
-          ) : (
-            <View style={{ height: 6 }} />
-          )}
-        </KeyboardAvoidingView>
-      </View>
+          <View style={styles.headerRow}>
+            <AskMomHeader onOpenHistory={() => setDrawerOpen(true)} />
+          </View>
+
+          <ScrollView
+            ref={scrollRef}
+            style={{ flex: 1 }}
+            contentContainerStyle={[
+              styles.content,
+              { paddingBottom: scrollBottomPad },
+            ]}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+            onContentSizeChange={() => scrollToBottom(true)}
+          >
+            {hasConversation ? (
+              <View style={styles.conversation}>
+                {messages.map((m) => (
+                  <ChatMessageRow key={m.id} msg={m} />
+                ))}
+              </View>
+            ) : (
+              <View style={{ height: 6 }} />
+            )}
+          </ScrollView>
+
+          {/* ✅ Composer sits at bottom and rides the keyboard */}
+          <View>
+            <ChatComposer
+              value={input}
+              onChange={setInput}
+              onSend={handleSend}
+              onClear={handleClear}
+              disabled={loading || !input.trim()}
+              loading={loading}
+              hasConversation={hasConversation}
+              messagesCount={messages.length}
+            />
+
+            {showHomeFooter ? (
+              <View style={{ paddingBottom: footerSafePad }}>
+                <HomeFooterButton onPress={() => router.replace("/(app)")} />
+              </View>
+            ) : (
+              <View style={{ height: 6 }} />
+            )}
+          </View>
+        </View>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  page: { flex: 1, backgroundColor: BRAND.pageBg },
+  // ✅ KEY FIX: make the OUTER background match the inner screen background.
+  // This removes the black flash/bar on Android when the keyboard dismisses.
+  page: { flex: 1, backgroundColor: BRAND.screenBg },
 
   screen: {
     flex: 1,
