@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import * as SecureStore from "expo-secure-store";
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
   Alert,
   Image,
@@ -11,6 +11,7 @@ import {
   StyleSheet,
   Text,
   View,
+  useWindowDimensions,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../../auth/AuthProvider";
@@ -41,6 +42,10 @@ export default function HomeScreen() {
   const { signOut } = useAuth();
   const insets = useSafeAreaInsets();
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+
+  // Responsive helpers
+  const { width } = useWindowDimensions();
+  const isNarrow = width < 380;
 
   const handleLogout = () => {
     if (isLoggingOut) return;
@@ -101,6 +106,11 @@ export default function HomeScreen() {
       { cancelable: true }
     );
   };
+
+  const bigBtnTextStyle = useMemo(
+    () => [styles.bigBtnText, isNarrow && styles.bigBtnTextNarrow],
+    [isNarrow]
+  );
 
   return (
     <SafeAreaView style={styles.page}>
@@ -164,7 +174,19 @@ export default function HomeScreen() {
                     color={BRAND.blue}
                   />
                 </View>
-                <Text style={styles.bigBtnText}>ASK MOM</Text>
+
+                {/* Text wrap is IMPORTANT for Android truncation/shrinking */}
+                <View style={styles.textWrap}>
+                  <Text
+                    style={bigBtnTextStyle}
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.7}
+                    ellipsizeMode="tail"
+                  >
+                    ASK MOM
+                  </Text>
+                </View>
               </Pressable>
 
               <Pressable
@@ -177,7 +199,18 @@ export default function HomeScreen() {
                 <View style={styles.iconPill}>
                   <Ionicons name="mail" size={34} color={BRAND.blue} />
                 </View>
-                <Text style={styles.bigBtnText}>EMAIL / TEXT MOM</Text>
+
+                <View style={styles.textWrap}>
+                  <Text
+                    style={bigBtnTextStyle}
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.7}
+                    ellipsizeMode="tail"
+                  >
+                    EMAIL / TEXT MOM
+                  </Text>
+                </View>
               </Pressable>
 
               <Pressable
@@ -190,7 +223,18 @@ export default function HomeScreen() {
                 <View style={styles.iconPill}>
                   <Ionicons name="call" size={34} color={BRAND.blue} />
                 </View>
-                <Text style={styles.bigBtnText}>CALL MOM</Text>
+
+                <View style={styles.textWrap}>
+                  <Text
+                    style={bigBtnTextStyle}
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.7}
+                    ellipsizeMode="tail"
+                  >
+                    CALL MOM
+                  </Text>
+                </View>
               </Pressable>
             </View>
           </View>
@@ -308,11 +352,23 @@ const styles = StyleSheet.create({
     borderColor: BRAND.blueBorder,
   },
 
+  // IMPORTANT: this wrapper + minWidth fixes Android text overflow in flex rows
+  textWrap: {
+    flex: 1,
+    minWidth: 0,
+  },
+
   bigBtnText: {
     color: BRAND.text,
     fontFamily: FONT.medium,
     fontSize: 24,
     letterSpacing: 1.0,
+    flexShrink: 1,
+  },
+
+  // Reduce letterSpacing on narrow screens (helps Android a lot)
+  bigBtnTextNarrow: {
+    letterSpacing: 0.4,
   },
 
   footer: {

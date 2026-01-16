@@ -61,7 +61,6 @@ export default function SignInScreen() {
     const hideSub = Keyboard.addListener("keyboardDidHide", () =>
       setKeyboardOpen(false)
     );
-
     return () => {
       showSub.remove();
       hideSub.remove();
@@ -69,10 +68,12 @@ export default function SignInScreen() {
   }, []);
 
   const fillAnim = useRef(new Animated.Value(0)).current;
+
   const fillWidth = fillAnim.interpolate({
     inputRange: [0, 1],
     outputRange: ["0%", "100%"],
   });
+
   const iconTravel = fillAnim.interpolate({
     inputRange: [0, 1],
     outputRange: [0, 120],
@@ -85,6 +86,16 @@ export default function SignInScreen() {
         toValue: 1,
         duration: 320,
         easing: Easing.out(Easing.cubic),
+        useNativeDriver: false,
+      }).start(() => resolve());
+    });
+
+  const resetFillAnim = () =>
+    new Promise<void>((resolve) => {
+      Animated.timing(fillAnim, {
+        toValue: 0,
+        duration: 180,
+        easing: Easing.in(Easing.cubic),
         useNativeDriver: false,
       }).start(() => resolve());
     });
@@ -106,6 +117,8 @@ export default function SignInScreen() {
       if (!ok) {
         await SecureStore.deleteItemAsync("auth_token");
         await SecureStore.deleteItemAsync("auth_user");
+        await resetFillAnim();
+        setIsSigningIn(false);
 
         Alert.alert(
           "Login failed",
@@ -116,6 +129,9 @@ export default function SignInScreen() {
 
       const token = String(json?.token || "");
       if (!token) {
+        await resetFillAnim();
+        setIsSigningIn(false);
+
         Alert.alert("Login failed", "Missing token from server.");
         return;
       }
@@ -126,18 +142,17 @@ export default function SignInScreen() {
         JSON.stringify(json?.user || {})
       );
 
-      // ✅ THIS is what stops the "bounce back to sign-in"
       await signIn();
-
       setPassword("");
       router.replace("/(app)");
     } catch {
+      await resetFillAnim();
+      setIsSigningIn(false);
+
       Alert.alert(
         "Network error",
         "Could not reach backend. Check LAN IP, Rails bind, and CORS."
       );
-    } finally {
-      setIsSigningIn(false);
     }
   };
 
@@ -146,7 +161,6 @@ export default function SignInScreen() {
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
-        keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 0}
       >
         <View
           style={[
@@ -233,24 +247,16 @@ export default function SignInScreen() {
                   <View style={styles.primaryInner} pointerEvents="none">
                     {isSigningIn ? (
                       <Animated.View
-                        style={[
-                          styles.primaryIconPill,
-                          {
-                            transform: [{ translateX: iconTravel }],
-                            marginHorizontal: "auto",
-                          },
-                        ]}
+                        style={{
+                          transform: [{ translateX: iconTravel }],
+                        }}
                       >
                         <Ionicons name="walk" size={22} color="#FFFFFF" />
                       </Animated.View>
                     ) : (
                       <>
-                        <View style={styles.primaryInner}>
-                          <Ionicons name="walk" size={22} color={BRAND.blue} />
-                        </View>
-
+                        <Ionicons name="walk" size={22} color={BRAND.blue} />
                         <Text style={styles.primaryText}>SIGN IN</Text>
-
                         <Ionicons
                           name="chevron-forward"
                           size={18}
@@ -281,7 +287,6 @@ export default function SignInScreen() {
 
 const styles = StyleSheet.create({
   page: { flex: 1, backgroundColor: BRAND.pageBg },
-
   screen: {
     flex: 1,
     backgroundColor: BRAND.screenBg,
@@ -289,16 +294,8 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 28,
     paddingHorizontal: 18,
   },
-
-  scrollContent: {
-    flexGrow: 1,
-    justifyContent: "center",
-  },
-
-  main: {
-    width: "100%",
-  },
-
+  scrollContent: { flexGrow: 1, justifyContent: "center" },
+  main: { width: "100%" },
   logoBanner: {
     width: "100%",
     aspectRatio: 2.3,
@@ -306,16 +303,13 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     overflow: "hidden",
   },
-
   logo: { width: "100%", height: "100%" },
-
   form: {
     borderWidth: 1,
     borderColor: BRAND.border,
     borderRadius: 22,
     padding: 18,
   },
-
   title: { fontSize: 26, fontFamily: FONT.semi, color: BRAND.text },
   subtitle: {
     color: BRAND.muted,
@@ -323,11 +317,8 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     fontFamily: FONT.regular,
   },
-
   field: { marginTop: 12 },
-
   label: { fontSize: 13, fontFamily: FONT.medium, color: BRAND.text },
-
   inputRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -340,7 +331,6 @@ const styles = StyleSheet.create({
     backgroundColor: BRAND.inputBg,
     marginTop: 8,
   },
-
   input: {
     flex: 1,
     fontSize: 16,
@@ -348,7 +338,6 @@ const styles = StyleSheet.create({
     fontFamily: FONT.regular,
     paddingVertical: 0,
   },
-
   primaryBtn: {
     marginTop: 16,
     borderRadius: 999,
@@ -357,7 +346,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: BRAND.blueBorder,
   },
-
   primaryFill: {
     position: "absolute",
     left: 0,
@@ -366,7 +354,6 @@ const styles = StyleSheet.create({
     backgroundColor: BRAND.blue,
     opacity: 0.95,
   },
-
   primaryInner: {
     flexDirection: "row",
     alignItems: "center",
@@ -375,25 +362,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     gap: 10,
   },
-
-  primaryIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: "#FFF",
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: BRAND.blueBorder,
-  },
-
   primaryText: {
     fontFamily: FONT.medium,
     fontSize: 16,
     letterSpacing: 1,
     color: BRAND.text,
   },
-
   footer: {
     alignItems: "center",
     paddingVertical: 10,
@@ -401,7 +375,6 @@ const styles = StyleSheet.create({
     borderTopColor: "#EEF2F7",
     gap: 4,
   },
-
   footerText: {
     fontSize: 14,
     color: BRAND.muted,

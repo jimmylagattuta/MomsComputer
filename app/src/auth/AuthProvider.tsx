@@ -20,7 +20,24 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 const STORAGE_KEY = "momscomputer:isAuthed";
 
-console.log("ENV CHECK (AuthProvider)", process.env.EXPO_PUBLIC_API_BASE_URL);
+// 🔧 LOCAL DEV TOGGLE
+// Flip this to true when your phone should hit your computer on the same Wi-Fi.
+const USE_LOCAL_API = true; // ⬅️ set to false to use EXPO_PUBLIC_API_BASE_URL
+
+// Your computer's LAN IP (from ipconfig) + your Rails port
+const LOCAL_API_BASE_URL = "http://192.168.12.141:3000";
+
+// Centralized resolver: use this everywhere (never reference env directly elsewhere)
+export const API_BASE_URL = USE_LOCAL_API
+  ? LOCAL_API_BASE_URL
+  : (process.env.EXPO_PUBLIC_API_BASE_URL as string);
+
+// Safety: prevent accidentally shipping a production build pointing at your LAN
+if (__DEV__ === false && USE_LOCAL_API) {
+  throw new Error("USE_LOCAL_API is enabled in a non-dev build");
+}
+
+console.log("API BASE URL (AuthProvider)", API_BASE_URL);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isAuthed, setIsAuthed] = useState(false);
@@ -80,14 +97,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       // 2) SecureStore: remove auth secrets
       // (Wrap individually so one failure doesn't block logout)
-      try { await SecureStore.deleteItemAsync("auth_token"); } catch { }
-      try { await SecureStore.deleteItemAsync("auth_user"); } catch { }
+      try {
+        await SecureStore.deleteItemAsync("auth_token");
+      } catch {}
+      try {
+        await SecureStore.deleteItemAsync("auth_user");
+      } catch {}
     } finally {
       // 3) Always flip state even if storage operations throw
       setIsAuthed(false);
     }
   };
-
 
   const value = useMemo(
     () => ({ isAuthed, isBooting, signIn, signInMock, signOut }),

@@ -1,6 +1,24 @@
-const API_BASE =
-  process.env.EXPO_PUBLIC_API_BASE_URL ||
-  "http://192.168.12.141:3000";
+// app/src/api/http.ts
+
+// 🔧 LOCAL DEV TOGGLE
+// Flip to true when your phone should hit your computer on the same Wi-Fi.
+const USE_LOCAL_API = true; // ⬅️ set to false to use EXPO_PUBLIC_API_BASE_URL
+
+// Your computer's LAN IP + backend port
+const LOCAL_API_BASE_URL = "http://192.168.12.141:3000";
+
+// Centralized resolver
+export const API_BASE =
+  USE_LOCAL_API
+    ? LOCAL_API_BASE_URL
+    : (process.env.EXPO_PUBLIC_API_BASE_URL as string);
+
+// 🚨 Safety: never allow a production build to point at a LAN IP
+if (__DEV__ === false && USE_LOCAL_API) {
+  throw new Error("USE_LOCAL_API is enabled in a non-dev build");
+}
+
+console.log("API BASE (http.ts)", API_BASE);
 
 async function parseJson(res: Response) {
   const text = await res.text();

@@ -50,6 +50,8 @@ export default function AskMomScreen() {
     undefined
   );
 
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
+
   const hasConversation = messages.length > 0;
 
   const scrollToBottom = (animated = true) => {
@@ -57,6 +59,20 @@ export default function AskMomScreen() {
       scrollRef.current?.scrollToEnd({ animated });
     });
   };
+
+  // Track keyboard visibility (so we can hide the Home button while typing)
+  useEffect(() => {
+    const showSub = Keyboard.addListener("keyboardDidShow", () =>
+      setKeyboardOpen(true)
+    );
+    const hideSub = Keyboard.addListener("keyboardDidHide", () =>
+      setKeyboardOpen(false)
+    );
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   // 🔁 Animated "Thinking…" dots (FAST)
   const startThinkingAnimation = (thinkingId: string) => {
@@ -109,7 +125,6 @@ export default function AskMomScreen() {
     startThinkingAnimation(thinkingId);
 
     try {
-      // ✅ Call backend (no artificial delay)
       const res = await askMom(text, conversationId);
 
       if (!conversationId) setConversationId(res.conversation_id);
@@ -124,11 +139,6 @@ export default function AskMomScreen() {
             : m
         )
       );
-
-      // optional: if escalate suggested, lightly nudge (no tickets)
-      if (res.escalate_suggested) {
-        // Later: show “Call/Text/Email” quick actions.
-      }
     } catch (e: any) {
       stopThinkingAnimation();
 
@@ -163,6 +173,20 @@ export default function AskMomScreen() {
     return () => stopThinkingAnimation();
   }, []);
 
+  // ✅ Android bottom nav buttons (triangle/circle/square) safety padding
+  // Gesture nav often reports insets.bottom > 0; 3-button nav can be 0.
+  const footerSafePad =
+    Platform.OS === "android" ? Math.max(insets.bottom, 14) : insets.bottom;
+
+  // When keyboard is open, we hide the Home button (restores the “beautiful” iOS look)
+  const showHomeFooter = !keyboardOpen;
+
+  // Give the ScrollView enough bottom padding so last messages aren't behind the composer
+  // If Home footer is visible, add its height + safe pad; if hidden, keep it tight.
+  const scrollBottomPad = showHomeFooter
+    ? 12 + footerSafePad + 64 + 110 // home footer area + composer-ish space
+    : 12 + 110; // just composer-ish space
+
   return (
     <SafeAreaView style={styles.page}>
       <View style={[styles.screen, { paddingTop: 25, paddingBottom: 0 }]}>
@@ -173,7 +197,7 @@ export default function AskMomScreen() {
         <ScrollView
           ref={scrollRef}
           style={{ flex: 1 }}
-          contentContainerStyle={styles.content}
+          contentContainerStyle={[styles.content, { paddingBottom: scrollBottomPad }]}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
           onContentSizeChange={() => scrollToBottom(true)}
@@ -189,9 +213,12 @@ export default function AskMomScreen() {
           )}
         </ScrollView>
 
+        {/* ✅ ONLY the bottom bar avoids the keyboard (keeps iOS looking clean) */}
         <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
-          keyboardVerticalOffset={0}
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          // iOS: this keeps the composer snug on top of the keyboard
+          // Android: height behavior prevents keyboard from covering the input
+          keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 0}
         >
           <ChatComposer
             value={input}
@@ -203,9 +230,17 @@ export default function AskMomScreen() {
             hasConversation={hasConversation}
             messagesCount={messages.length}
           />
-        </KeyboardAvoidingView>
 
-        <HomeFooterButton onPress={() => router.replace("/(app)")} />
+          {/* ✅ Hide Home while typing; when visible, pad above Android system nav */}
+          {showHomeFooter ? (
+            <View style={{ paddingBottom: footerSafePad }}>
+              <HomeFooterButton onPress={() => router.replace("/(app)")} />
+            </View>
+          ) : (
+            // Keep a tiny spacer so the border/top separation still feels intentional
+            <View style={{ height: 6 }} />
+          )}
+        </KeyboardAvoidingView>
       </View>
     </SafeAreaView>
   );
