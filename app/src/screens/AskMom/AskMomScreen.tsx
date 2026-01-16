@@ -16,11 +16,17 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AskMomHeader from "./components/AskMomHeader";
 import ChatComposer from "./components/ChatComposer";
 import ChatMessageRow from "./components/ChatMessageRow";
+import HistoryDrawer from "./components/HistoryDrawer";
 import HomeFooterButton from "./components/HomeFooterButton";
 import type { ChatMessage } from "./components/types";
 import { BRAND, H_PADDING } from "./theme";
 
 import { askMom } from "../../services/api/askMom";
+import {
+  ConversationSummary,
+  fetchConversation,
+  fetchConversations,
+} from "../../services/api/conversations";
 
 function uid() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -36,6 +42,10 @@ function formatAssistantText(summary: string, steps: string[]) {
   return lines.join("\n");
 }
 
+function roleFromSenderType(senderType: string) {
+  return senderType === "user" ? "user" : "assistant";
+}
+
 export default function AskMomScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -43,15 +53,21 @@ export default function AskMomScreen() {
   const scrollRef = useRef<ScrollView | null>(null);
   const thinkingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
+  /** ✅ History drawer state */
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
+  /** ✅ Preloaded conversations for drawer */
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [conversationId, setConversationId] = useState<number | undefined>(
     undefined
   );
 
   const [keyboardOpen, setKeyboardOpen] = useState(false);
-
   const hasConversation = messages.length > 0;
 
   const scrollToBottom = (animated = true) => {
@@ -60,7 +76,28 @@ export default function AskMomScreen() {
     });
   };
 
-  // Track keyboard visibility (so we can hide the Home button while typing)
+  // ✅ Preload conversation list on screen mount (non-blocking)
+  useEffect(() => {
+    let mounted = true;
+
+    (async () => {
+      try {
+        const data = await fetchConversations();
+        if (!mounted) return;
+
+        setConversations(data);
+        console.log("PRELOADED CONVERSATIONS (AskMomScreen)", data);
+      } catch (e: any) {
+        console.log("PRELOAD CONVERSATIONS FAILED (AskMomScreen)", e);
+      }
+    })();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  // Keyboard visibility (hide home footer while typing)
   useEffect(() => {
     const showSub = Keyboard.addListener("keyboardDidShow", () =>
       setKeyboardOpen(true)
@@ -74,7 +111,7 @@ export default function AskMomScreen() {
     };
   }, []);
 
-  // 🔁 Animated "Thinking…" dots (FAST)
+  // 🔁 Animated "Thinking…" dots
   const startThinkingAnimation = (thinkingId: string) => {
     let dots = 1;
 
@@ -92,6 +129,48 @@ export default function AskMomScreen() {
     if (thinkingIntervalRef.current) {
       clearInterval(thinkingIntervalRef.current);
       thinkingIntervalRef.current = null;
+    }
+  };
+
+  const handleSelectConversation = async (id: number) => {
+    // Close drawer immediately so it feels snappy
+    setDrawerOpen(false);
+
+    // Stop any pending thinking state
+    stopThinkingAnimation();
+
+    // Show loading state using the existing flag (disables send button too)
+    setLoading(true);
+
+    try {
+      const detail = await fetchConversation(id);
+
+      console.log("LOADED CONVERSATION DETAIL (AskMomScreen)", detail);
+
+      setConversationId(id);
+
+      const mapped: ChatMessage[] = (detail.messages || [])
+        .filter((m) => (m?.content || "").trim().length > 0)
+        .map((m) => ({
+          // keep stable id, but ChatMessageRow expects string
+          id: String(m.id),
+          role: roleFromSenderType(String(m.sender_type || "")) as any,
+          text: String(m.content || ""),
+          pending: false,
+        }));
+
+      setMessages(mapped);
+
+      // Scroll down after render
+      setTimeout(() => scrollToBottom(false), 50);
+    } catch (e: any) {
+      console.log("LOAD CONVERSATION FAILED (AskMomScreen)", e);
+      Alert.alert(
+        "Couldn’t load that chat",
+        e?.message ? String(e.message) : "Please try again."
+      );
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -139,6 +218,15 @@ export default function AskMomScreen() {
             : m
         )
       );
+
+      // Refresh drawer list after a new message (so title/risk/last_message updates)
+      try {
+        const updated = await fetchConversations();
+        setConversations(updated);
+        console.log("REFRESHED CONVERSATIONS (AskMomScreen)", updated);
+      } catch (e) {
+        console.log("REFRESH CONVERSATIONS FAILED (AskMomScreen)", e);
+      }
     } catch (e: any) {
       stopThinkingAnimation();
 
@@ -146,11 +234,11 @@ export default function AskMomScreen() {
         prev.map((m) =>
           m.id === thinkingId
             ? {
-                ...m,
-                text:
-                  "I couldn’t reach the server right now. Please try again.\n\n(If this is urgent or involves money/codes, don’t proceed—tell me what it said.)",
-                pending: false,
-              }
+              ...m,
+              text:
+                "I couldn’t reach the server right now. Please try again.\n\n(If this is urgent or involves money/codes, don’t proceed—tell me what it said.)",
+              pending: false,
+            }
             : m
         )
       );
@@ -173,31 +261,40 @@ export default function AskMomScreen() {
     return () => stopThinkingAnimation();
   }, []);
 
-  // ✅ Android bottom nav buttons (triangle/circle/square) safety padding
-  // Gesture nav often reports insets.bottom > 0; 3-button nav can be 0.
+  // Android bottom nav safety padding
   const footerSafePad =
     Platform.OS === "android" ? Math.max(insets.bottom, 14) : insets.bottom;
 
-  // When keyboard is open, we hide the Home button (restores the “beautiful” iOS look)
   const showHomeFooter = !keyboardOpen;
 
-  // Give the ScrollView enough bottom padding so last messages aren't behind the composer
-  // If Home footer is visible, add its height + safe pad; if hidden, keep it tight.
   const scrollBottomPad = showHomeFooter
-    ? 12 + footerSafePad + 64 + 110 // home footer area + composer-ish space
-    : 12 + 110; // just composer-ish space
+    ? 12 + footerSafePad + 64 + 110
+    : 12 + 110;
 
   return (
     <SafeAreaView style={styles.page}>
       <View style={[styles.screen, { paddingTop: 25, paddingBottom: 0 }]}>
+        {/* ✅ Drawer overlay */}
+        <HistoryDrawer
+          open={drawerOpen}
+          onClose={() => setDrawerOpen(false)}
+          conversations={conversations}
+          onSelectConversation={handleSelectConversation}
+          onUpdateConversations={setConversations}
+        />
+
+
         <View style={styles.headerRow}>
-          <AskMomHeader />
+          <AskMomHeader onOpenHistory={() => setDrawerOpen(true)} />
         </View>
 
         <ScrollView
           ref={scrollRef}
           style={{ flex: 1 }}
-          contentContainerStyle={[styles.content, { paddingBottom: scrollBottomPad }]}
+          contentContainerStyle={[
+            styles.content,
+            { paddingBottom: scrollBottomPad },
+          ]}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
           onContentSizeChange={() => scrollToBottom(true)}
@@ -213,12 +310,9 @@ export default function AskMomScreen() {
           )}
         </ScrollView>
 
-        {/* ✅ ONLY the bottom bar avoids the keyboard (keeps iOS looking clean) */}
         <KeyboardAvoidingView
           behavior={Platform.OS === "ios" ? "padding" : "height"}
-          // iOS: this keeps the composer snug on top of the keyboard
-          // Android: height behavior prevents keyboard from covering the input
-          keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 0}
+          keyboardVerticalOffset={0}
         >
           <ChatComposer
             value={input}
@@ -231,13 +325,11 @@ export default function AskMomScreen() {
             messagesCount={messages.length}
           />
 
-          {/* ✅ Hide Home while typing; when visible, pad above Android system nav */}
           {showHomeFooter ? (
             <View style={{ paddingBottom: footerSafePad }}>
               <HomeFooterButton onPress={() => router.replace("/(app)")} />
             </View>
           ) : (
-            // Keep a tiny spacer so the border/top separation still feels intentional
             <View style={{ height: 6 }} />
           )}
         </KeyboardAvoidingView>
