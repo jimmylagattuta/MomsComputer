@@ -97,7 +97,7 @@ export default function AskMomScreen() {
     };
   }, []);
 
-  // Keyboard visibility (hide home footer while typing)
+  // Keyboard visibility (we can hide only the HOME footer button, not the composer)
   useEffect(() => {
     const showSub = Keyboard.addListener("keyboardDidShow", () =>
       setKeyboardOpen(true)
@@ -117,10 +117,10 @@ export default function AskMomScreen() {
 
     thinkingIntervalRef.current = setInterval(() => {
       dots = dots === 4 ? 1 : dots + 1;
-      const text = `Thinking${".".repeat(dots)}`;
+      const t = `Thinking${".".repeat(dots)}`;
 
       setMessages((prev) =>
-        prev.map((m) => (m.id === thinkingId ? { ...m, text } : m))
+        prev.map((m) => (m.id === thinkingId ? { ...m, text: t } : m))
       );
     }, 220);
   };
@@ -207,7 +207,18 @@ export default function AskMomScreen() {
       setMessages((prev) =>
         prev.map((m) =>
           m.id === thinkingId
-            ? { ...m, text: assistantText, pending: false }
+            ? {
+                ...m,
+                text: assistantText,
+                pending: false,
+
+                // ✅ attach contact panel fields onto assistant message
+                show_contact_panel: !!res.show_contact_panel,
+                escalation_reason: res.escalation_reason || null,
+                contact_actions: res.contact_actions || null,
+                contact_draft: res.contact_draft || null,
+                contact_targets: res.contact_targets || null,
+              }
             : m
         )
       );
@@ -253,26 +264,31 @@ export default function AskMomScreen() {
     return () => stopThinkingAnimation();
   }, []);
 
-  // Android bottom nav safety padding (trimmed a bit)
+  // Safe-area pad under HOME footer when keyboard is closed.
   const footerSafePad =
     Platform.OS === "android" ? Math.max(insets.bottom, 8) : insets.bottom;
 
-  const showHomeFooter = !keyboardOpen;
+  // We ONLY hide the home footer button while typing.
+  const showHomeFooterButton = !keyboardOpen;
 
-  const scrollBottomPad = showHomeFooter
+  // Scroll padding should assume composer is always present.
+  // Add extra only when HomeFooterButton is also present.
+  const scrollBottomPad = showHomeFooterButton
     ? 12 + footerSafePad + 50 + 96
     : 12 + 96;
 
   return (
     <SafeAreaView style={styles.page}>
-      {/* ✅ Wrap the WHOLE screen so Android "resizes" the layout like iOS */}
       <KeyboardAvoidingView
         style={{ flex: 1 }}
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        keyboardVerticalOffset={0}
+        behavior={
+          Platform.OS === "ios"
+            ? "padding"
+            : "padding" // ✅ Android: keep input above keyboard
+        }
+        keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 0}
       >
         <View style={[styles.screen, { paddingTop: 25, paddingBottom: 0 }]}>
-          {/* ✅ Drawer overlay */}
           <HistoryDrawer
             open={drawerOpen}
             onClose={() => setDrawerOpen(false)}
@@ -298,8 +314,13 @@ export default function AskMomScreen() {
           >
             {hasConversation ? (
               <View style={styles.conversation}>
-                {messages.map((m) => (
-                  <ChatMessageRow key={m.id} msg={m} />
+                {messages.map((m, idx) => (
+                  <ChatMessageRow
+                    key={m.id}
+                    msg={m}
+                    thread={messages}
+                    index={idx}
+                  />
                 ))}
               </View>
             ) : (
@@ -307,7 +328,7 @@ export default function AskMomScreen() {
             )}
           </ScrollView>
 
-          {/* ✅ Composer sits at bottom and rides the keyboard */}
+          {/* ✅ Bottom stack ALWAYS present so it rides above the keyboard */}
           <View>
             <ChatComposer
               value={input}
@@ -320,12 +341,13 @@ export default function AskMomScreen() {
               messagesCount={messages.length}
             />
 
-            {showHomeFooter ? (
+            {showHomeFooterButton ? (
               <View style={{ paddingBottom: footerSafePad }}>
                 <HomeFooterButton onPress={() => router.replace("/(app)")} />
               </View>
             ) : (
-              <View style={{ height: 6 }} />
+              // Keep a tiny spacer so the composer doesn't "jump"
+              <View style={{ height: 8 }} />
             )}
           </View>
         </View>
@@ -335,8 +357,6 @@ export default function AskMomScreen() {
 }
 
 const styles = StyleSheet.create({
-  // ✅ KEY FIX: make the OUTER background match the inner screen background.
-  // This removes the black flash/bar on Android when the keyboard dismisses.
   page: { flex: 1, backgroundColor: BRAND.screenBg },
 
   screen: {

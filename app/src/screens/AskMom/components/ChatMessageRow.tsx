@@ -1,14 +1,27 @@
+// app/src/screens/AskMom/components/ChatMessageRow.tsx
 import React from "react";
 import { StyleSheet, Text, View } from "react-native";
 import { BRAND, FONT } from "../theme";
+import ContactMomPanel from "./ContactMomPanel";
 import type { ChatMessage } from "./types";
 
-export default function ChatMessageRow({ msg }: { msg: ChatMessage }) {
+export default function ChatMessageRow({
+  msg,
+  thread,
+  index,
+}: {
+  msg: ChatMessage;
+  thread: ChatMessage[];
+  index: number;
+}) {
   const isUser = msg.role === "user";
+  const isAssistant = !isUser;
 
   return (
     <View style={[styles.row, isUser ? styles.rowRight : styles.rowLeft]}>
-      <View style={[styles.metaRow, isUser ? styles.metaRight : styles.metaLeft]}>
+      <View
+        style={[styles.metaRow, isUser ? styles.metaRight : styles.metaLeft]}
+      >
         <Text style={styles.meta}>{isUser ? "You" : "Ask Mom"}</Text>
       </View>
 
@@ -17,6 +30,17 @@ export default function ChatMessageRow({ msg }: { msg: ChatMessage }) {
           {msg.text}
         </Text>
       </View>
+
+      {/* ✅ Inline Contact Mom panel under the assistant message bubble */}
+      {isAssistant && !msg.pending && (
+        <ContactMomPanel
+          visible={!!msg.show_contact_panel}
+          actions={msg.contact_actions}
+          phoneNumber={msg.contact_targets?.phone || null}
+          email={msg.contact_targets?.email || null}
+          draft={msg.contact_draft || null}
+        />
+      )}
     </View>
   );
 }
@@ -62,7 +86,6 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
 
-  // Subtle differentiation (still clean + senior friendly)
   momCard: {
     borderColor: BRAND.border,
     backgroundColor: "#FFFFFF",
