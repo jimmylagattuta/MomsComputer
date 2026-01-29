@@ -11,13 +11,12 @@ import {
   Linking,
   Platform,
   Pressable,
-  SafeAreaView,
   StyleSheet,
   Text,
   View,
   useWindowDimensions,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { FONT } from "../../../src/theme";
 import { useAuth } from "../../auth/AuthProvider";
 import { postJson } from "../../services/api/client";
@@ -37,21 +36,13 @@ const LOGO_URI =
   "https://res.cloudinary.com/djtsuktwb/image/upload/v1769703507/ChatGPT_Image_Jan_29_2026_08_00_07_AM_1_3_gtqeo8.jpg";
 
 function AnimatedHint() {
-  /**
-   * Goal:
-   * - Bubble/card is ALWAYS rendered immediately (no card entrance/exit).
-   * - Only the INSIDE elements animate (sheen, icon pop/wiggle, text lines).
-   * - Avoid iOS “first paint flash then disappear” by never unmounting, never animating card opacity,
-   *   and starting animations after 1–2 frames.
-   */
-
   // Sheen sweep
   const sheenX = useRef(new Animated.Value(-140)).current;
   const sheenOpacity = useRef(new Animated.Value(0)).current;
 
   // Icon pop + wiggle
   const iconScale = useRef(new Animated.Value(0.92)).current;
-  const iconRotate = useRef(new Animated.Value(0)).current; // -1..1 mapped to degrees
+  const iconRotate = useRef(new Animated.Value(0)).current;
 
   // Line 1
   const l1Opacity = useRef(new Animated.Value(0)).current;
@@ -202,13 +193,9 @@ function AnimatedHint() {
       ]);
 
       sequenceRef.current = seq;
-
-      seq.start(() => {
-        // Done. Bubble stays forever.
-      });
+      seq.start(() => {});
     };
 
-    // iOS: wait an extra frame to reduce any first-paint/font-swap weirdness
     if (Platform.OS === "ios") {
       raf1 = requestAnimationFrame(() => {
         raf2 = requestAnimationFrame(() => startOnce());
@@ -245,9 +232,7 @@ function AnimatedHint() {
 
   return (
     <View style={styles.hintRow} pointerEvents="none">
-      {/* ✅ Bubble is just THERE. No card animation. */}
       <View style={styles.hintCard}>
-        {/* subtle moving sheen */}
         <Animated.View
           pointerEvents="none"
           style={[
@@ -308,7 +293,6 @@ export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const [isLoggingOut, setIsLoggingOut] = useState(false);
 
-  // Responsive helpers
   const { width } = useWindowDimensions();
   const isNarrow = width < 380;
 
@@ -328,7 +312,6 @@ export default function HomeScreen() {
             try {
               const token = await SecureStore.getItemAsync("auth_token");
 
-              // Best-effort backend revoke (don’t block logout on network errors)
               if (token) {
                 try {
                   await postJson("/v1/auth/logout", {}, token);
@@ -377,17 +360,15 @@ export default function HomeScreen() {
     [isNarrow]
   );
 
+  // Footer sizing
+  const FOOTER_MIN_HEIGHT = 56;
+  const footerPaddingBottom = Math.max(insets.bottom, 10) + 10;
+  const footerTotalHeight = FOOTER_MIN_HEIGHT + footerPaddingBottom;
+
   return (
-    <SafeAreaView style={styles.page}>
-      <View
-        style={[
-          styles.screen,
-          {
-            paddingTop: Math.max(insets.top, 10),
-            paddingBottom: Math.max(insets.bottom, 10),
-          },
-        ]}
-      >
+    // ✅ Use safe-area-context SafeAreaView and DO NOT double-apply insets on iOS
+    <SafeAreaView style={styles.page} edges={["top", "left", "right"]}>
+      <View style={[styles.screen, { paddingTop: 8, paddingBottom: 10 }]}>
         <View style={styles.topBar}>
           <View style={{ flex: 1 }} />
           <Pressable
@@ -419,7 +400,8 @@ export default function HomeScreen() {
           </Pressable>
         </View>
 
-        <View style={styles.main}>
+        {/* Reserve space so footer never collides */}
+        <View style={[styles.main, { paddingBottom: footerTotalHeight }]}>
           <View style={[styles.row, styles.rowFullBleed]}>
             <View style={styles.bannerRow}>
               <View style={styles.logoBanner} pointerEvents="none">
@@ -432,10 +414,9 @@ export default function HomeScreen() {
             </View>
           </View>
 
-          {/* Bubble is always present; inner elements animate */}
           <AnimatedHint />
 
-          <View style={styles.actionsWrap}>
+          <View style={[styles.actionsWrap, { paddingTop: 4 }]}>
             <View style={styles.actions}>
               <Pressable
                 onPress={() => router.push("/(app)/ask-mom")}
@@ -531,7 +512,16 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        <View style={styles.footer}>
+        <View
+          style={[
+            styles.footer,
+            {
+              paddingBottom: footerPaddingBottom,
+              minHeight: FOOTER_MIN_HEIGHT,
+            },
+          ]}
+          pointerEvents="none"
+        >
           <Ionicons name="home" size={24} color={BRAND.blue} />
           <Text style={styles.footerText}>Home</Text>
         </View>
@@ -621,8 +611,8 @@ const styles = StyleSheet.create({
   logo: { width: "100%", height: "100%" },
 
   hintRow: {
-    marginTop: 12,
-    marginBottom: 18,
+    marginTop: 10,
+    marginBottom: 14,
     width: "100%",
   },
 
@@ -682,7 +672,7 @@ const styles = StyleSheet.create({
     lineHeight: 17,
   },
 
-  actionsWrap: { flex: 1, justifyContent: "center" },
+  actionsWrap: { flex: 1, justifyContent: "flex-start" },
 
   actions: { width: "100%", gap: 12 },
 
@@ -694,7 +684,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: BRAND.border,
     borderRadius: 22,
-    paddingVertical: 28,
+    paddingVertical: 24,
     paddingHorizontal: 20,
     backgroundColor: "#FFFFFF",
     shadowColor: "#000",
@@ -706,9 +696,7 @@ const styles = StyleSheet.create({
 
   bigBtnPressed: { transform: [{ scale: 0.99 }], opacity: 0.98 },
 
-  disabledBtn: {
-    opacity: 0.55,
-  },
+  disabledBtn: { opacity: 0.55 },
 
   iconPill: {
     width: 64,
@@ -734,9 +722,7 @@ const styles = StyleSheet.create({
     flexShrink: 1,
   },
 
-  bigBtnTextNarrow: {
-    letterSpacing: 0.4,
-  },
+  bigBtnTextNarrow: { letterSpacing: 0.4 },
 
   btnSubText: {
     marginTop: 6,
@@ -747,13 +733,20 @@ const styles = StyleSheet.create({
   },
 
   footer: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+
     alignItems: "center",
     justifyContent: "center",
-    paddingTop: 10,
-    paddingBottom: 4,
+
+    paddingTop: 8,
     borderTopWidth: 1,
     borderTopColor: "#EEF2F7",
     gap: 4,
+
+    backgroundColor: BRAND.screenBg,
   },
 
   footerText: {
