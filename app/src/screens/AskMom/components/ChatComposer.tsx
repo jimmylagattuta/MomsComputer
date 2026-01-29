@@ -1,7 +1,14 @@
 // app/src/screens/AskMom/components/ChatComposer.tsx
 import { Ionicons } from "@expo/vector-icons";
 import React, { useMemo, useRef, useState } from "react";
-import { Modal, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import {
+  Modal,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 import { BRAND, FONT } from "../theme";
 
 type SpellResult = {
@@ -227,13 +234,13 @@ export default function ChatComposer({
                 color={isClearAction ? BRAND.red : BRAND.blue}
               />
               <Text style={styles.modalTitle}>
-                {isClearAction ? "Clear this chat?" : "Nothing to clear"}
+                {isClearAction ? "Start fresh?" : "Nothing to clear"}
               </Text>
             </View>
 
             <Text style={styles.modalBody}>
               {isClearAction
-                ? "This will permanently delete the current conversation. Are you sure?"
+                ? "I'll clear our chat so we can begin again."
                 : "There aren’t any messages in this thread yet."}
             </Text>
 
@@ -260,7 +267,7 @@ export default function ChatComposer({
                     ]}
                   >
                     <Ionicons name="trash" size={16} color="#f70a0aff" />
-                    <Text style={styles.modalBtnDangerText}>Yes, clear</Text>
+                    <Text style={styles.modalBtnDangerText}>Start Fresh</Text>
                   </Pressable>
                 </>
               ) : (
@@ -323,8 +330,8 @@ export default function ChatComposer({
         </Pressable>
 
         <Text style={styles.disclaimer}>
-          Don’t share passwords, login codes, SSN, or bank numbers. We will never
-          ask.
+          I’ll never ask for your password, login codes, SSN, or bank info. This
+          app can help you spot scam tactics, but it is not financial advice.
         </Text>
       </View>
     </View>

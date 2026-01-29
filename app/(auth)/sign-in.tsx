@@ -22,6 +22,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../src/auth/AuthProvider";
 import { postJson } from "../src/services/api/client";
+import { FONT } from "../src/theme"; // ✅ add this
 
 const BRAND = {
   pageBg: "#0B1220",
@@ -35,11 +36,6 @@ const BRAND = {
   inputBg: "#FFFFFF",
 };
 
-const FONT = {
-  regular: "Inter-Regular",
-  medium: "Inter-Medium",
-  semi: "Inter-Medium",
-};
 
 const LOGO_URI =
   "https://res.cloudinary.com/djtsuktwb/image/upload/v1766530533/NON_M_copy_2_3_poheb7.jpg";
@@ -519,7 +515,11 @@ export default function SignInScreen() {
           {!keyboardOpen && (
             <View style={styles.footer}>
               <Ionicons name="shield-checkmark" size={22} color={BRAND.blue} />
-              <Text style={styles.footerText}>Scam Helpline</Text>
+              <Text style={styles.footerText}>
+                Mom&apos;s Scam Helpline{"\n"}Since 2
+                <Text style={styles.footerZero}>0</Text>
+                13
+              </Text>
             </View>
           )}
         </View>
@@ -675,5 +675,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: BRAND.muted,
     fontFamily: FONT.regular,
+    textAlign: "center",
+  },
+  footerZero: {
+    fontFamily: Platform.select({
+      ios: "System",
+      android: "sans-serif",
+    }),
   },
 });

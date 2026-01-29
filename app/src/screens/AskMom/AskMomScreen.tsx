@@ -46,6 +46,22 @@ function roleFromSenderType(senderType: string) {
   return senderType === "user" ? "user" : "assistant";
 }
 
+// ✅ Warm "thinking" options (randomly picked per send)
+const THINKING_OPTIONS = [
+  // "Hang on, let me take a look",
+  // "Okay — I’m checking on this",
+  "One sec, I’m looking into it",
+  // "Got it. Give me a moment",
+  // "Alright, I’m on it",
+  // "Let me double-check that",
+  // "Hang tight — I’m reviewing this",
+  // "Just a moment, I’m verifying a few things",
+];
+
+function pickThinkingText() {
+  return THINKING_OPTIONS[Math.floor(Math.random() * THINKING_OPTIONS.length)];
+}
+
 export default function AskMomScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -112,17 +128,17 @@ export default function AskMomScreen() {
   }, []);
 
   // 🔁 Animated "Thinking…" dots
-  const startThinkingAnimation = (thinkingId: string) => {
-    let dots = 1;
+  const startThinkingAnimation = (thinkingId: string, base: string) => {
+    let dots = 0;
 
     thinkingIntervalRef.current = setInterval(() => {
-      dots = dots === 4 ? 1 : dots + 1;
-      const t = `Thinking${".".repeat(dots)}`;
+      dots = dots === 3 ? 0 : dots + 1;
+      const t = `${base}${".".repeat(dots)}`;
 
       setMessages((prev) =>
         prev.map((m) => (m.id === thinkingId ? { ...m, text: t } : m))
       );
-    }, 220);
+    }, 260);
   };
 
   const stopThinkingAnimation = () => {
@@ -184,17 +200,19 @@ export default function AskMomScreen() {
     const userMsg: ChatMessage = { id: uid(), role: "user", text };
 
     const thinkingId = uid();
+    const thinkingBase = pickThinkingText();
+
     const thinkingMsg: ChatMessage = {
       id: thinkingId,
       role: "assistant",
-      text: "Thinking.",
+      text: thinkingBase,
       pending: true,
     };
 
     setMessages((prev) => [...prev, userMsg, thinkingMsg]);
     setTimeout(() => scrollToBottom(true), 30);
 
-    startThinkingAnimation(thinkingId);
+    startThinkingAnimation(thinkingId, thinkingBase);
 
     try {
       const res = await askMom(text, conversationId);
@@ -264,9 +282,9 @@ export default function AskMomScreen() {
     return () => stopThinkingAnimation();
   }, []);
 
-  // Safe-area pad under HOME footer when keyboard is closed.
-  const footerSafePad =
-    Platform.OS === "android" ? Math.max(insets.bottom, 8) : insets.bottom;
+  // ✅ FIX: Android insets.bottom can change after keyboard show/hide, causing a new gap.
+  // Keep Android padding stable so the Home button always hugs the bottom.
+  const footerSafePad = Platform.OS === "android" ? 8 : insets.bottom;
 
   // We ONLY hide the home footer button while typing.
   const showHomeFooterButton = !keyboardOpen;
@@ -281,11 +299,7 @@ export default function AskMomScreen() {
     <SafeAreaView style={styles.page}>
       <KeyboardAvoidingView
         style={{ flex: 1 }}
-        behavior={
-          Platform.OS === "ios"
-            ? "padding"
-            : "padding" // ✅ Android: keep input above keyboard
-        }
+        behavior={Platform.OS === "ios" ? "padding" : "padding"}
         keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 0}
       >
         <View style={[styles.screen, { paddingTop: 25, paddingBottom: 0 }]}>

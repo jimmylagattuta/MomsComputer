@@ -2,21 +2,21 @@
 import { useRouter } from "expo-router";
 import React from "react";
 import {
-    Alert,
-    Image,
-    Linking,
-    Platform,
-    Pressable,
-    SafeAreaView,
-    ScrollView,
-    StyleSheet,
-    Text,
-    View,
+  Alert,
+  Image,
+  Linking,
+  Platform,
+  Pressable,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
 } from "react-native";
-
+import { FONT } from "../../../src/theme"; // ✅ add this
 // ✅ Use the SAME theme module as AskMom so spacing/colors match
 import HomeFooterButton from "../AskMom/components/HomeFooterButton";
-import { BRAND, FONT, H_PADDING } from "../AskMom/theme";
+import { BRAND, H_PADDING } from "../AskMom/theme";
 
 const MOM_LOGO_URI =
   "https://res.cloudinary.com/djtsuktwb/image/upload/v1766549235/ChatGPT_Image_Dec_23_2025_08_06_16_PM_zfytp3.png";
@@ -78,11 +78,12 @@ export default function TextMomScreen() {
           styles.screen,
           {
             paddingTop: 25,
-            paddingBottom: 0,
+            paddingBottom: Platform.OS === "ios" ? 14 : 12,
             paddingHorizontal: H_PADDING,
           },
         ]}
       >
+
         {/* ✅ Same header style as AskMom */}
         <TextMomHeader />
 

@@ -4,25 +4,26 @@ import { useRouter } from "expo-router";
 import * as SecureStore from "expo-secure-store";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-    Alert,
-    Animated,
-    Easing,
-    Image,
-    InteractionManager,
-    Keyboard,
-    KeyboardAvoidingView,
-    Platform,
-    Pressable,
-    SafeAreaView,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    View,
+  Alert,
+  Animated,
+  Easing,
+  Image,
+  InteractionManager,
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../src/auth/AuthProvider";
 import { postJson } from "../src/services/api/client";
+import { FONT } from "../src/theme";
 
 const BRAND = {
   pageBg: "#0B1220",
@@ -40,12 +41,6 @@ const BRAND = {
   warnSoft: "#FFFAEB",
   ok: "#039855",
   okSoft: "#ECFDF3",
-};
-
-const FONT = {
-  regular: "Inter-Regular",
-  medium: "Inter-Medium",
-  semi: "Inter-SemiBold",
 };
 
 const LOGO_URI =
@@ -578,7 +573,12 @@ export default function SignUpScreen() {
           {!keyboardOpen && (
             <View style={styles.footer}>
               <Ionicons name="shield-checkmark" size={22} color={BRAND.blue} />
-              <Text style={styles.footerText}>Scam Helpline</Text>
+              <Text style={styles.footerText}>
+                Mom&apos;s Scam Helpline{"\n"}Since 2
+                <Text style={styles.footerZero}>0</Text>
+                13
+              </Text>
+
             </View>
           )}
         </View>
@@ -731,5 +731,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: BRAND.muted,
     fontFamily: FONT.regular,
+    textAlign: "center",
+  },
+  footerZero: {
+    fontFamily: Platform.select({
+      ios: "System",
+      android: "sans-serif",
+    }),
   },
 });
