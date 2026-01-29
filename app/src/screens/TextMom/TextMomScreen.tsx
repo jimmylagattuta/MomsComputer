@@ -1,4 +1,5 @@
 // app/src/screens/TextMom/TextMomScreen.tsx
+import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import React from "react";
 import {
@@ -7,15 +8,13 @@ import {
   Linking,
   Platform,
   Pressable,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { FONT } from "../../../src/theme"; // ✅ add this
-// ✅ Use the SAME theme module as AskMom so spacing/colors match
-import HomeFooterButton from "../AskMom/components/HomeFooterButton";
 import { BRAND, H_PADDING } from "../AskMom/theme";
 
 const MOM_LOGO_URI =
@@ -43,19 +42,24 @@ function buildMailtoUrl(email: string, subject: string, body: string) {
   return `mailto:${email}?subject=${s}&body=${b}`;
 }
 
-// ✅ Header styled exactly like AskMomHeader, but with different text
+// ✅ Header styled like AskMomHeader, but with different text
 function TextMomHeader() {
   return (
     <View style={styles.headerWrap}>
       <Text style={styles.headerText}>Text / Email</Text>
 
-      <Image source={{ uri: MOM_LOGO_URI }} style={styles.momLogo} resizeMode="contain" />
+      <Image
+        source={{ uri: MOM_LOGO_URI }}
+        style={styles.momLogo}
+        resizeMode="contain"
+      />
     </View>
   );
 }
 
 export default function TextMomScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
 
   // TODO: replace with real values (or pull from profile/settings later)
   const MOM_PHONE = "+15625551234";
@@ -68,35 +72,55 @@ export default function TextMomScreen() {
   };
 
   const handleOpenEmail = () => {
-    openUrlOrAlert(buildMailtoUrl(MOM_EMAIL, "Can you check if this is a scam?", template));
+    openUrlOrAlert(
+      buildMailtoUrl(MOM_EMAIL, "Can you check if this is a scam?", template)
+    );
   };
 
+  /**
+   * ✅ Make bottom Home button EXACTLY like HomeScreen:
+   * - Absolute footer, same icon/text sizing
+   * - Safe-area aware bottom padding so Android 3-button nav (triangle/circle/square)
+   *   never overlaps it
+   * - Reserve space at bottom so ScrollView content never collides
+   */
+  const FOOTER_MIN_HEIGHT = 56;
+
+  // This extra ensures even Android devices with insets.bottom === 0 still get breathing room.
+  const footerPaddingBottom = Math.max(insets.bottom, 12) + 10;
+
+  const footerTotalHeight = FOOTER_MIN_HEIGHT + footerPaddingBottom;
+
   return (
-    <SafeAreaView style={styles.page}>
+    // ✅ Use safe-area-context SafeAreaView and avoid double top padding
+    <SafeAreaView style={styles.page} edges={["top", "left", "right"]}>
       <View
         style={[
           styles.screen,
           {
-            paddingTop: 25,
-            paddingBottom: Platform.OS === "ios" ? 14 : 12,
+            paddingTop: 12,
+            paddingBottom: 10,
             paddingHorizontal: H_PADDING,
           },
         ]}
       >
-
-        {/* ✅ Same header style as AskMom */}
         <TextMomHeader />
 
         <ScrollView
           style={{ flex: 1 }}
-          contentContainerStyle={styles.content}
+          contentContainerStyle={[
+            styles.content,
+            // ✅ reserve footer space so content never sits behind it
+            { paddingBottom: footerTotalHeight + 10 },
+          ]}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Choose how to contact Mom</Text>
             <Text style={styles.cardBody}>
-              Tap one option below. We’ll open your messaging app with a ready-to-paste template.
+              Tap one option below. We’ll open your messaging app with a
+              ready-to-paste template.
             </Text>
 
             <View style={styles.actions}>
@@ -131,16 +155,29 @@ export default function TextMomScreen() {
           <View style={styles.tipCard}>
             <Text style={styles.tipTitle}>Tip</Text>
             <Text style={styles.tipBody}>
-              Don’t include passwords, 2FA codes, SSNs, or bank numbers. If it asks for money or
-              gift cards, pause and verify first.
+              Don’t include passwords, 2FA codes, SSNs, or bank numbers. If it
+              asks for money or gift cards, pause and verify first.
             </Text>
           </View>
 
           <View style={{ height: 6 }} />
         </ScrollView>
 
-        {/* ✅ Same footer component as AskMom */}
-        <HomeFooterButton onPress={() => router.replace("/(app)")} />
+        {/* ✅ Footer matches HomeScreen (bigger + safe-area padded, never overlaps nav) */}
+        <Pressable
+          onPress={() => router.replace("/(app)")}
+          style={[
+            styles.footer,
+            {
+              minHeight: FOOTER_MIN_HEIGHT,
+              paddingBottom: footerPaddingBottom,
+            },
+          ]}
+          hitSlop={10}
+        >
+          <Ionicons name="home" size={24} color={BRAND.blue} />
+          <Text style={styles.footerText}>Home</Text>
+        </Pressable>
       </View>
     </SafeAreaView>
   );
@@ -161,7 +198,6 @@ const styles = StyleSheet.create({
 
   content: {
     paddingTop: 12,
-    paddingBottom: 12,
     gap: 12,
   },
 
@@ -291,5 +327,30 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 18,
     fontFamily: FONT.regular,
+  },
+
+  // ✅ EXACT HomeScreen-style footer
+  footer: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+
+    alignItems: "center",
+    justifyContent: "center",
+
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: "#EEF2F7",
+    gap: 4,
+
+    backgroundColor: BRAND.screenBg,
+  },
+
+  footerText: {
+    color: BRAND.muted,
+    fontFamily: FONT.regular,
+    fontSize: 14,
+    letterSpacing: 0.25,
   },
 });

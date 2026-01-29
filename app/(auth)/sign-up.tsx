@@ -44,7 +44,16 @@ const BRAND = {
 };
 
 const LOGO_URI =
-  "https://res.cloudinary.com/djtsuktwb/image/upload/v1766530533/NON_M_copy_2_3_poheb7.jpg";
+  "https://res.cloudinary.com/djtsuktwb/image/upload/v1769703507/ChatGPT_Image_Jan_29_2026_08_00_07_AM_1_3_gtqeo8.jpg";
+
+const H_PADDING = 18;
+
+// ✅ Give the banner MORE HEIGHT (taller) like before
+// (smaller aspectRatio => taller banner)
+const LOGO_ASPECT_RATIO = 1.75;
+
+// ✅ Keep the nice breathing room between banner and screen
+const LOGO_BOTTOM_GAP = 10;
 
 function norm(s: string) {
   return String(s || "").trim();
@@ -91,14 +100,12 @@ function pickBestErrorMessage(json: any, status: number): string {
   return `Sign up failed (HTTP ${status}).`;
 }
 
-// Wait a couple frames (forces RN to paint updated state)
 function afterNextPaint(): Promise<void> {
   return new Promise((resolve) => {
     requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
   });
 }
 
-// Wait until current interactions/animations settle, then pause briefly
 function letAnimationBeSeen(ms: number): Promise<void> {
   return new Promise((resolve) => {
     InteractionManager.runAfterInteractions(() => {
@@ -127,10 +134,8 @@ export default function SignUpScreen() {
   const [isSigningUp, setIsSigningUp] = useState(false);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
 
-  // Inline error message (senior-friendly)
   const [inlineError, setInlineError] = useState<string | null>(null);
 
-  // ✅ Debounced hint: show after pause, match or mismatch
   const [pwHint, setPwHint] = useState<PwHintState>("hidden");
   const confirmTypingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -158,14 +163,12 @@ export default function SignUpScreen() {
       confirmTypingTimerRef.current = null;
     }
 
-    // while typing, hide any hint
     setPwHint("hidden");
 
     confirmTypingTimerRef.current = setTimeout(() => {
       const pw = String(password || "");
       const pc = String(nextConfirm || "");
 
-      // Only show a hint once both fields have content
       if (!pw || !pc) {
         setPwHint("hidden");
         return;
@@ -175,7 +178,6 @@ export default function SignUpScreen() {
     }, delayMs);
   };
 
-  // ===== Animation (FIX) =====
   const fillAnim = useRef(new Animated.Value(0)).current;
 
   const btnWidthRef = useRef<number>(0);
@@ -254,8 +256,6 @@ export default function SignUpScreen() {
     const v = validateClient();
     if (v) {
       setInlineError(v);
-
-      // if submit attempted and both present, show immediate hint
       if (password && passwordConfirm) {
         setPwHint(password === passwordConfirm ? "match" : "mismatch");
       }
@@ -318,10 +318,7 @@ export default function SignUpScreen() {
       await resetFillAnim();
       setIsSigningUp(false);
 
-      Alert.alert(
-        "Network error",
-        "Could not reach backend. Check LAN IP, Rails bind, and CORS."
-      );
+      Alert.alert("Network error", "Could not reach backend. Check LAN IP, Rails bind, and CORS.");
     }
   };
 
@@ -339,15 +336,21 @@ export default function SignUpScreen() {
         style={{ flex: 1 }}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
       >
+        {/* ✅ Taller banner (aspect ratio change) + bottom gap */}
         <View
           style={[
-            styles.screen,
+            styles.logoBannerFullBleed,
             {
-              paddingTop: Math.max(insets.top, 10),
-              paddingBottom: Math.max(insets.bottom, 10),
+              paddingTop: Math.max(insets.top, 10) + (Platform.OS === "android" ? 8 : 0),
+              paddingBottom: LOGO_BOTTOM_GAP,
             },
           ]}
+          pointerEvents="none"
         >
+          <Image source={{ uri: LOGO_URI }} style={styles.logoFullBleed} />
+        </View>
+
+        <View style={[styles.screen, { paddingBottom: Math.max(insets.bottom, 10) }]}>
           <ScrollView
             style={{ flex: 1 }}
             contentContainerStyle={styles.scrollContent}
@@ -355,10 +358,6 @@ export default function SignUpScreen() {
             showsVerticalScrollIndicator={false}
           >
             <View style={styles.main}>
-              <View style={styles.logoBanner}>
-                <Image source={{ uri: LOGO_URI }} style={styles.logo} />
-              </View>
-
               <View style={styles.form}>
                 <Text style={styles.title}>Sign Up</Text>
                 <Text style={styles.subtitle}>Create your account</Text>
@@ -441,7 +440,6 @@ export default function SignUpScreen() {
                         setPassword(t);
                         if (inlineError) setInlineError(null);
 
-                        // If they already got a hint and then edit password, keep it accurate
                         if (pwHint !== "hidden" && passwordConfirm) {
                           setPwHint(t === passwordConfirm ? "match" : "mismatch");
                         }
@@ -457,11 +455,7 @@ export default function SignUpScreen() {
                       disabled={isSigningUp}
                       hitSlop={10}
                     >
-                      <Ionicons
-                        name={secure1 ? "eye" : "eye-off"}
-                        size={22}
-                        color={BRAND.muted}
-                      />
+                      <Ionicons name={secure1 ? "eye" : "eye-off"} size={22} color={BRAND.muted} />
                     </Pressable>
                   </View>
                 </View>
@@ -489,11 +483,7 @@ export default function SignUpScreen() {
                       disabled={isSigningUp}
                       hitSlop={10}
                     >
-                      <Ionicons
-                        name={secure2 ? "eye" : "eye-off"}
-                        size={22}
-                        color={BRAND.muted}
-                      />
+                      <Ionicons name={secure2 ? "eye" : "eye-off"} size={22} color={BRAND.muted} />
                     </Pressable>
                   </View>
 
@@ -531,13 +521,9 @@ export default function SignUpScreen() {
                     pointerEvents="none"
                     style={[
                       styles.primaryFill,
-                      {
-                        transform: fillTransform,
-                        opacity: isSigningUp ? 0.95 : 0,
-                      },
+                      { transform: fillTransform, opacity: isSigningUp ? 0.95 : 0 },
                     ]}
                   />
-
                   <View style={styles.primaryInner} pointerEvents="none">
                     {isSigningUp ? (
                       <Animated.View style={{ transform: [{ translateX: iconTravel }] }}>
@@ -574,11 +560,8 @@ export default function SignUpScreen() {
             <View style={styles.footer}>
               <Ionicons name="shield-checkmark" size={22} color={BRAND.blue} />
               <Text style={styles.footerText}>
-                Mom&apos;s Scam Helpline{"\n"}Since 2
-                <Text style={styles.footerZero}>0</Text>
-                13
+                Mom&apos;s Scam Helpline{"\n"}Since 2<Text style={styles.footerZero}>0</Text>13
               </Text>
-
             </View>
           )}
         </View>
@@ -589,23 +572,33 @@ export default function SignUpScreen() {
 
 const styles = StyleSheet.create({
   page: { flex: 1, backgroundColor: BRAND.pageBg },
+
+  // ✅ Taller by aspect ratio + bottom padding stays inside this container
+  logoBannerFullBleed: {
+    width: "100%",
+    backgroundColor: "#FFFFFF",
+    aspectRatio: LOGO_ASPECT_RATIO,
+    overflow: "hidden",
+  },
+
+  // ✅ Ensure the image fills the banner area (cover), no clipping now that it's taller
+  logoFullBleed: {
+    width: "100%",
+    height: "100%",
+    resizeMode: "cover",
+  },
+
   screen: {
     flex: 1,
     backgroundColor: BRAND.screenBg,
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    paddingHorizontal: 18,
+    borderTopLeftRadius: 0,
+    borderTopRightRadius: 0,
+    paddingHorizontal: H_PADDING,
+    marginTop: 0,
   },
+
   scrollContent: { flexGrow: 1, justifyContent: "center" },
   main: { width: "100%" },
-  logoBanner: {
-    width: "100%",
-    aspectRatio: 2.3,
-    marginBottom: 12,
-    borderRadius: 14,
-    overflow: "hidden",
-  },
-  logo: { width: "100%", height: "100%" },
 
   form: {
     borderWidth: 1,
@@ -613,6 +606,7 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     padding: 18,
   },
+
   title: { fontSize: 26, fontFamily: FONT.semi, color: BRAND.text },
   subtitle: {
     color: BRAND.muted,

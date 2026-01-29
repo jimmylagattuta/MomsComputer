@@ -22,7 +22,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../src/auth/AuthProvider";
 import { postJson } from "../src/services/api/client";
-import { FONT } from "../src/theme"; // ✅ add this
+import { FONT } from "../src/theme";
 
 const BRAND = {
   pageBg: "#0B1220",
@@ -36,9 +36,14 @@ const BRAND = {
   inputBg: "#FFFFFF",
 };
 
-
 const LOGO_URI =
-  "https://res.cloudinary.com/djtsuktwb/image/upload/v1766530533/NON_M_copy_2_3_poheb7.jpg";
+  "https://res.cloudinary.com/djtsuktwb/image/upload/v1769703507/ChatGPT_Image_Jan_29_2026_08_00_07_AM_1_3_gtqeo8.jpg";
+
+const H_PADDING = 18;
+
+// ✅ Taller banner again (slightly more than 1.95)
+// Smaller ratio = taller banner (height = width / ratio)
+const LOGO_ASPECT_RATIO = 1.85;
 
 function sleep(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -58,7 +63,6 @@ function looksLikeEmail(email: string) {
 function pickFriendlyAuthError(status: number, json: any) {
   const raw = String(json?.error || json?.message || "").toLowerCase();
 
-  // Most common auth failure
   if (status === 401 || raw.includes("invalid") || raw.includes("unauthorized")) {
     return "That email or password doesn’t look right. Please try again.";
   }
@@ -68,7 +72,6 @@ function pickFriendlyAuthError(status: number, json: any) {
   }
 
   if (status === 422) {
-    // validation-ish
     if (raw.includes("email")) return "Please enter a valid email address.";
     if (raw.includes("password")) return "Please enter your password.";
     return "Please double-check your info and try again.";
@@ -82,7 +85,6 @@ function pickFriendlyAuthError(status: number, json: any) {
     return "Our server is having trouble right now. Please try again in a moment.";
   }
 
-  // network / unknown
   if (status === 0) {
     return "We couldn’t reach the server. Please check your connection and try again.";
   }
@@ -106,12 +108,8 @@ export default function SignInScreen() {
   const anyBusy = isSigningIn || isGoingToSignUp;
 
   useEffect(() => {
-    const showSub = Keyboard.addListener("keyboardDidShow", () =>
-      setKeyboardOpen(true)
-    );
-    const hideSub = Keyboard.addListener("keyboardDidHide", () =>
-      setKeyboardOpen(false)
-    );
+    const showSub = Keyboard.addListener("keyboardDidShow", () => setKeyboardOpen(true));
+    const hideSub = Keyboard.addListener("keyboardDidHide", () => setKeyboardOpen(false));
     return () => {
       showSub.remove();
       hideSub.remove();
@@ -181,7 +179,6 @@ export default function SignInScreen() {
   // =========================
   // SIGN UP animation (only)
   // - icon moves INTO CENTER and STOPS
-  // - no running off-screen
   // =========================
   const signUpFillAnim = useRef(new Animated.Value(0)).current;
   const signUpFillWidth = signUpFillAnim.interpolate({
@@ -277,10 +274,7 @@ export default function SignInScreen() {
       await runSignInAnim();
 
       const { ok, status, json } = await postJson("/v1/auth/login", {
-        user: {
-          email: em,
-          password: pw.trim(),
-        },
+        user: { email: em, password: pw.trim() },
       });
 
       if (!ok) {
@@ -349,13 +343,15 @@ export default function SignInScreen() {
       >
         <View
           style={[
-            styles.screen,
-            {
-              paddingTop: Math.max(insets.top, 10),
-              paddingBottom: Math.max(insets.bottom, 10),
-            },
+            styles.logoBannerFullBleed,
+            { paddingTop: Math.max(insets.top, 10) + (Platform.OS === "android" ? 8 : 0) },
           ]}
+          pointerEvents="none"
         >
+          <Image source={{ uri: LOGO_URI }} style={styles.logoFullBleed} />
+        </View>
+
+        <View style={[styles.screen, { paddingBottom: Math.max(insets.bottom, 10) }]}>
           <ScrollView
             style={{ flex: 1 }}
             contentContainerStyle={styles.scrollContent}
@@ -363,10 +359,6 @@ export default function SignInScreen() {
             showsVerticalScrollIndicator={false}
           >
             <View style={styles.main}>
-              <View style={styles.logoBanner}>
-                <Image source={{ uri: LOGO_URI }} style={styles.logo} />
-              </View>
-
               <View style={styles.form}>
                 <Text style={styles.title}>Sign In</Text>
                 <Text style={styles.subtitle}>Welcome back</Text>
@@ -403,26 +395,16 @@ export default function SignInScreen() {
                       editable={!anyBusy}
                       onSubmitEditing={handleSignIn}
                       returnKeyType="go"
-                      // ✅ do NOT auto-capitalize passwords
                       autoCapitalize="none"
                       autoCorrect={false}
                       textContentType="password"
                     />
-                    <Pressable
-                      onPress={() => setSecure((s) => !s)}
-                      disabled={anyBusy}
-                      hitSlop={10}
-                    >
-                      <Ionicons
-                        name={secure ? "eye" : "eye-off"}
-                        size={22}
-                        color={BRAND.muted}
-                      />
+                    <Pressable onPress={() => setSecure((s) => !s)} disabled={anyBusy} hitSlop={10}>
+                      <Ionicons name={secure ? "eye" : "eye-off"} size={22} color={BRAND.muted} />
                     </Pressable>
                   </View>
                 </View>
 
-                {/* SIGN IN button */}
                 <Pressable
                   onPress={handleSignIn}
                   disabled={anyBusy}
@@ -436,10 +418,7 @@ export default function SignInScreen() {
                     pointerEvents="none"
                     style={[
                       styles.primaryFill,
-                      {
-                        width: signInFillWidth,
-                        opacity: isSigningIn ? 0.95 : 0,
-                      },
+                      { width: signInFillWidth, opacity: isSigningIn ? 0.95 : 0 },
                     ]}
                   />
                   <View style={styles.primaryInner} pointerEvents="none">
@@ -463,7 +442,6 @@ export default function SignInScreen() {
                 </Pressable>
               </View>
 
-              {/* SIGN UP row */}
               <View style={styles.newMemberRow}>
                 <Text style={styles.newMemberText}>New member?</Text>
 
@@ -481,10 +459,7 @@ export default function SignInScreen() {
                     pointerEvents="none"
                     style={[
                       styles.newMemberFill,
-                      {
-                        width: signUpFillWidth,
-                        opacity: isGoingToSignUp ? 0.95 : 0,
-                      },
+                      { width: signUpFillWidth, opacity: isGoingToSignUp ? 0.95 : 0 },
                     ]}
                   />
                   <View style={styles.newMemberInner} pointerEvents="none">
@@ -516,9 +491,7 @@ export default function SignInScreen() {
             <View style={styles.footer}>
               <Ionicons name="shield-checkmark" size={22} color={BRAND.blue} />
               <Text style={styles.footerText}>
-                Mom&apos;s Scam Helpline{"\n"}Since 2
-                <Text style={styles.footerZero}>0</Text>
-                13
+                Mom&apos;s Scam Helpline{"\n"}Since 2<Text style={styles.footerZero}>0</Text>13
               </Text>
             </View>
           )}
@@ -530,24 +503,31 @@ export default function SignInScreen() {
 
 const styles = StyleSheet.create({
   page: { flex: 1, backgroundColor: BRAND.pageBg },
+
+  logoBannerFullBleed: {
+    width: "100%",
+    backgroundColor: "#FFFFFF",
+    aspectRatio: LOGO_ASPECT_RATIO,
+    overflow: "hidden",
+  },
+
+  logoFullBleed: {
+    width: "100%",
+    height: "100%",
+    resizeMode: "cover",
+  },
+
   screen: {
     flex: 1,
     backgroundColor: BRAND.screenBg,
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    paddingHorizontal: 18,
+    borderTopLeftRadius: 0,
+    borderTopRightRadius: 0,
+    paddingHorizontal: H_PADDING,
+    marginTop: -14,
   },
+
   scrollContent: { flexGrow: 1, justifyContent: "center" },
   main: { width: "100%" },
-
-  logoBanner: {
-    width: "100%",
-    aspectRatio: 2.3,
-    marginBottom: 12,
-    borderRadius: 14,
-    overflow: "hidden",
-  },
-  logo: { width: "100%", height: "100%" },
 
   form: {
     borderWidth: 1,
@@ -555,7 +535,9 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     padding: 18,
   },
+
   title: { fontSize: 26, fontFamily: FONT.semi, color: BRAND.text },
+
   subtitle: {
     color: BRAND.muted,
     marginTop: 4,
@@ -578,6 +560,7 @@ const styles = StyleSheet.create({
     backgroundColor: BRAND.inputBg,
     marginTop: 8,
   },
+
   input: {
     flex: 1,
     fontSize: 16,
@@ -594,6 +577,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: BRAND.blueBorder,
   },
+
   primaryFill: {
     position: "absolute",
     left: 0,
@@ -602,6 +586,7 @@ const styles = StyleSheet.create({
     backgroundColor: BRAND.blue,
     opacity: 0.95,
   },
+
   primaryInner: {
     flexDirection: "row",
     alignItems: "center",
@@ -610,6 +595,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     gap: 10,
   },
+
   primaryText: {
     fontFamily: FONT.medium,
     fontSize: 16,
@@ -623,11 +609,13 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 8,
   },
+
   newMemberText: {
     fontSize: 14,
     color: BRAND.muted,
     fontFamily: FONT.regular,
   },
+
   newMemberBtn: {
     position: "relative",
     overflow: "hidden",
@@ -642,6 +630,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: BRAND.blueBorder,
   },
+
   newMemberFill: {
     position: "absolute",
     left: 0,
@@ -651,12 +640,14 @@ const styles = StyleSheet.create({
     opacity: 0.95,
     borderRadius: 999,
   },
+
   newMemberInner: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
   },
+
   newMemberBtnText: {
     fontSize: 14,
     color: BRAND.text,
@@ -671,12 +662,14 @@ const styles = StyleSheet.create({
     borderTopColor: "#EEF2F7",
     gap: 4,
   },
+
   footerText: {
     fontSize: 14,
     color: BRAND.muted,
     fontFamily: FONT.regular,
     textAlign: "center",
   },
+
   footerZero: {
     fontFamily: Platform.select({
       ios: "System",
