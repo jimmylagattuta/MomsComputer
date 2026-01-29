@@ -3,8 +3,9 @@ import { useRouter } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import {
   Alert,
+  Animated,
+  Easing,
   Keyboard,
-  KeyboardAvoidingView,
   Platform,
   SafeAreaView,
   ScrollView,
@@ -47,16 +48,7 @@ function roleFromSenderType(senderType: string) {
 }
 
 // ✅ Warm "thinking" options (randomly picked per send)
-const THINKING_OPTIONS = [
-  // "Hang on, let me take a look",
-  // "Okay — I’m checking on this",
-  "One sec, I’m looking into it",
-  // "Got it. Give me a moment",
-  // "Alright, I’m on it",
-  // "Let me double-check that",
-  // "Hang tight — I’m reviewing this",
-  // "Just a moment, I’m verifying a few things",
-];
+const THINKING_OPTIONS = ["One sec, I’m looking into it"];
 
 function pickThinkingText() {
   return THINKING_OPTIONS[Math.floor(Math.random() * THINKING_OPTIONS.length)];
@@ -83,8 +75,20 @@ export default function AskMomScreen() {
     undefined
   );
 
-  const [keyboardOpen, setKeyboardOpen] = useState(false);
   const hasConversation = messages.length > 0;
+
+  // ✅ Keyboard driven animation (works on BOTH iOS + Android, regardless of "resize" mode)
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
+  const kbHeight = useRef(new Animated.Value(0)).current;
+
+  const animateKb = (to: number, duration = 220) => {
+    Animated.timing(kbHeight, {
+      toValue: to,
+      duration,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  };
 
   const scrollToBottom = (animated = true) => {
     requestAnimationFrame(() => {
@@ -113,19 +117,42 @@ export default function AskMomScreen() {
     };
   }, []);
 
-  // Keyboard visibility (we can hide only the HOME footer button, not the composer)
+  // ✅ Keyboard listeners:
+  // - iOS uses WillShow/WillHide for perfect sync with animation
+  // - Android uses DidShow/DidHide (more reliable)
+  // We animate the bottom stack by the REAL keyboard height => always hugs keyboard.
   useEffect(() => {
-    const showSub = Keyboard.addListener("keyboardDidShow", () =>
-      setKeyboardOpen(true)
-    );
-    const hideSub = Keyboard.addListener("keyboardDidHide", () =>
-      setKeyboardOpen(false)
-    );
+    const showEvent =
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent =
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+
+    const showSub = Keyboard.addListener(showEvent as any, (e: any) => {
+      const rawH = Math.max(0, e?.endCoordinates?.height || 0);
+
+      // These two numbers are the “one stone” calibration.
+      // - iOS: subtract insets.bottom because rawH often includes it.
+      // - Android: add a tiny bump because edge-to-edge / IME often needs more lift.
+      const iosLift = Math.max(0, rawH - insets.bottom);
+      const androidLift = rawH + Math.max(insets.bottom, 0) + 6;
+
+      const lift = Platform.OS === "ios" ? iosLift : androidLift;
+
+      setKeyboardOpen(true);
+      animateKb(lift, Platform.OS === "ios" ? 220 : 160);
+    });
+
+    const hideSub = Keyboard.addListener(hideEvent as any, () => {
+      setKeyboardOpen(false);
+      animateKb(0, Platform.OS === "ios" ? 220 : 140);
+    });
+
     return () => {
       showSub.remove();
       hideSub.remove();
     };
-  }, []);
+  }, [kbHeight, insets.bottom]);
+
 
   // 🔁 Animated "Thinking…" dots
   const startThinkingAnimation = (thinkingId: string, base: string) => {
@@ -226,17 +253,17 @@ export default function AskMomScreen() {
         prev.map((m) =>
           m.id === thinkingId
             ? {
-                ...m,
-                text: assistantText,
-                pending: false,
+              ...m,
+              text: assistantText,
+              pending: false,
 
-                // ✅ attach contact panel fields onto assistant message
-                show_contact_panel: !!res.show_contact_panel,
-                escalation_reason: res.escalation_reason || null,
-                contact_actions: res.contact_actions || null,
-                contact_draft: res.contact_draft || null,
-                contact_targets: res.contact_targets || null,
-              }
+              // ✅ attach contact panel fields onto assistant message
+              show_contact_panel: !!res.show_contact_panel,
+              escalation_reason: res.escalation_reason || null,
+              contact_actions: res.contact_actions || null,
+              contact_draft: res.contact_draft || null,
+              contact_targets: res.contact_targets || null,
+            }
             : m
         )
       );
@@ -255,11 +282,11 @@ export default function AskMomScreen() {
         prev.map((m) =>
           m.id === thinkingId
             ? {
-                ...m,
-                text:
-                  "I couldn’t reach the server right now. Please try again.\n\n(If this is urgent or involves money/codes, don’t proceed—tell me what it said.)",
-                pending: false,
-              }
+              ...m,
+              text:
+                "I couldn’t reach the server right now. Please try again.\n\n(If this is urgent or involves money/codes, don’t proceed—tell me what it said.)",
+              pending: false,
+            }
             : m
         )
       );
@@ -282,9 +309,13 @@ export default function AskMomScreen() {
     return () => stopThinkingAnimation();
   }, []);
 
-  // ✅ FIX: Android insets.bottom can change after keyboard show/hide, causing a new gap.
-  // Keep Android padding stable so the Home button always hugs the bottom.
-  const footerSafePad = Platform.OS === "android" ? 8 : insets.bottom;
+  /**
+   * ✅ Safe footer padding:
+   * - Android 3-button nav spacing
+   * - iOS safe area bottom
+   */
+  const footerSafePad =
+    Platform.OS === "android" ? Math.max(insets.bottom, 12) + 10 : insets.bottom;
 
   // We ONLY hide the home footer button while typing.
   const showHomeFooterButton = !keyboardOpen;
@@ -297,75 +328,71 @@ export default function AskMomScreen() {
 
   return (
     <SafeAreaView style={styles.page}>
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === "ios" ? "padding" : "padding"}
-        keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 0}
-      >
-        <View style={[styles.screen, { paddingTop: 25, paddingBottom: 0 }]}>
-          <HistoryDrawer
-            open={drawerOpen}
-            onClose={() => setDrawerOpen(false)}
-            conversations={conversations}
-            onSelectConversation={handleSelectConversation}
-            onUpdateConversations={setConversations}
+      <View style={[styles.screen, { paddingTop: 25, paddingBottom: 0 }]}>
+        <HistoryDrawer
+          open={drawerOpen}
+          onClose={() => setDrawerOpen(false)}
+          conversations={conversations}
+          onSelectConversation={handleSelectConversation}
+          onUpdateConversations={setConversations}
+        />
+
+        <View style={styles.headerRow}>
+          <AskMomHeader onOpenHistory={() => setDrawerOpen(true)} />
+        </View>
+
+        <ScrollView
+          ref={scrollRef}
+          style={{ flex: 1 }}
+          contentContainerStyle={[
+            styles.content,
+            { paddingBottom: scrollBottomPad },
+          ]}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          onContentSizeChange={() => scrollToBottom(true)}
+        >
+          {hasConversation ? (
+            <View style={styles.conversation}>
+              {messages.map((m, idx) => (
+                <ChatMessageRow key={m.id} msg={m} thread={messages} index={idx} />
+              ))}
+            </View>
+          ) : (
+            <View style={{ height: 6 }} />
+          )}
+        </ScrollView>
+
+        {/* ✅ Bottom stack: we animate it upward by keyboard height on BOTH platforms */}
+        <Animated.View
+          style={{
+            transform: [
+              {
+                translateY: Animated.multiply(kbHeight, -1),
+              },
+            ],
+          }}
+        >
+          <ChatComposer
+            value={input}
+            onChange={setInput}
+            onSend={handleSend}
+            onClear={handleClear}
+            disabled={loading || !input.trim()}
+            loading={loading}
+            hasConversation={hasConversation}
+            messagesCount={messages.length}
           />
 
-          <View style={styles.headerRow}>
-            <AskMomHeader onOpenHistory={() => setDrawerOpen(true)} />
-          </View>
-
-          <ScrollView
-            ref={scrollRef}
-            style={{ flex: 1 }}
-            contentContainerStyle={[
-              styles.content,
-              { paddingBottom: scrollBottomPad },
-            ]}
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}
-            onContentSizeChange={() => scrollToBottom(true)}
-          >
-            {hasConversation ? (
-              <View style={styles.conversation}>
-                {messages.map((m, idx) => (
-                  <ChatMessageRow
-                    key={m.id}
-                    msg={m}
-                    thread={messages}
-                    index={idx}
-                  />
-                ))}
-              </View>
-            ) : (
-              <View style={{ height: 6 }} />
-            )}
-          </ScrollView>
-
-          {/* ✅ Bottom stack ALWAYS present so it rides above the keyboard */}
-          <View>
-            <ChatComposer
-              value={input}
-              onChange={setInput}
-              onSend={handleSend}
-              onClear={handleClear}
-              disabled={loading || !input.trim()}
-              loading={loading}
-              hasConversation={hasConversation}
-              messagesCount={messages.length}
-            />
-
-            {showHomeFooterButton ? (
-              <View style={{ paddingBottom: footerSafePad }}>
-                <HomeFooterButton onPress={() => router.replace("/(app)")} />
-              </View>
-            ) : (
-              // Keep a tiny spacer so the composer doesn't "jump"
-              <View style={{ height: 8 }} />
-            )}
-          </View>
-        </View>
-      </KeyboardAvoidingView>
+          {showHomeFooterButton ? (
+            <View style={{ paddingBottom: footerSafePad }}>
+              <HomeFooterButton onPress={() => router.replace("/(app)")} />
+            </View>
+          ) : (
+            <View style={{ height: 8 }} />
+          )}
+        </Animated.View>
+      </View>
     </SafeAreaView>
   );
 }
