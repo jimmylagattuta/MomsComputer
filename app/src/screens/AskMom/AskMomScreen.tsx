@@ -1,4 +1,5 @@
 // app/src/screens/AskMom/AskMomScreen.tsx
+import * as ImageManipulator from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
 import { useRouter } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
@@ -61,6 +62,38 @@ const PRECHAT_OPENER =
 
 // ✅ Max image attachments
 const MAX_IMAGES = 5;
+
+// ✅ Convert HEIC/HEIF/etc to JPEG so backend + OpenAI are happy
+async function ensureJpegUri(uri: string) {
+  const lower = (uri || "").toLowerCase();
+
+  // If it's already a "normal" extension, keep it.
+  // (Some pickers return content:// without an extension — we'll convert those too.)
+  const looksLikeJpegOrPng =
+    lower.endsWith(".jpg") ||
+    lower.endsWith(".jpeg") ||
+    lower.endsWith(".png") ||
+    lower.includes("image/jpg") ||
+    lower.includes("image/jpeg") ||
+    lower.includes("image/png");
+
+  const looksLikeHeic =
+    lower.endsWith(".heic") ||
+    lower.endsWith(".heif") ||
+    lower.includes("image/heic") ||
+    lower.includes("image/heif");
+
+  if (looksLikeJpegOrPng && !looksLikeHeic) return uri;
+
+  // Convert to JPEG (no resize, just re-encode)
+  const result = await ImageManipulator.manipulateAsync(
+    uri,
+    [],
+    { compress: 0.9, format: ImageManipulator.SaveFormat.JPEG }
+  );
+
+  return result.uri;
+}
 
 export default function AskMomScreen() {
   const router = useRouter();
@@ -261,7 +294,6 @@ export default function AskMomScreen() {
         }))
       );
 
-
       setConversationId(id);
 
       const mapped: ChatMessage[] = (detail.messages || [])
@@ -277,7 +309,6 @@ export default function AskMomScreen() {
             ? (m as any).images.map((uri: string) => ({ uri }))
             : [],
         }));
-
 
       setMessages(mapped);
       setComposerImages([]); // ✅ reset local attachments on thread switch
@@ -329,10 +360,26 @@ export default function AskMomScreen() {
 
       if (result.canceled) return;
 
-      const picked: ComposerImage[] = (result.assets || [])
+      const pickedUris = (result.assets || [])
         .map((a) => a?.uri)
-        .filter(Boolean)
-        .map((uri) => ({ uri, loading: true })); // ✅ start as loading so placeholders appear instantly
+        .filter(Boolean) as string[];
+
+      const convertedUris: string[] = [];
+      for (const u of pickedUris) {
+        try {
+          const jpegUri = await ensureJpegUri(u);
+          convertedUris.push(jpegUri);
+        } catch (err) {
+          console.log("IMAGE CONVERT FAILED", u, err);
+          // fallback: still try original
+          convertedUris.push(u);
+        }
+      }
+
+      const picked: ComposerImage[] = convertedUris.map((uri) => ({
+        uri,
+        loading: true, // ✅ show placeholder/spinner until thumb decodes
+      }));
 
       setComposerImages((prev) => {
         const merged = [...prev];
@@ -422,17 +469,17 @@ export default function AskMomScreen() {
         prev.map((m) =>
           m.id === thinkingId
             ? {
-              ...m,
-              text: assistantText,
-              pending: false,
+                ...m,
+                text: assistantText,
+                pending: false,
 
-              // ✅ attach contact panel fields onto assistant message
-              show_contact_panel: !!res.show_contact_panel,
-              escalation_reason: res.escalation_reason || null,
-              contact_actions: res.contact_actions || null,
-              contact_draft: res.contact_draft || null,
-              contact_targets: res.contact_targets || null,
-            }
+                // ✅ attach contact panel fields onto assistant message
+                show_contact_panel: !!res.show_contact_panel,
+                escalation_reason: res.escalation_reason || null,
+                contact_actions: res.contact_actions || null,
+                contact_draft: res.contact_draft || null,
+                contact_targets: res.contact_targets || null,
+              }
             : m
         )
       );
@@ -451,11 +498,11 @@ export default function AskMomScreen() {
         prev.map((m) =>
           m.id === thinkingId
             ? {
-              ...m,
-              text:
-                "I couldn’t reach the server right now. Please try again.\n\n(If this is urgent or involves money/codes, don’t proceed—tell me what it said.)",
-              pending: false,
-            }
+                ...m,
+                text:
+                  "I couldn’t reach the server right now. Please try again.\n\n(If this is urgent or involves money/codes, don’t proceed—tell me what it said.)",
+                pending: false,
+              }
             : m
         )
       );
