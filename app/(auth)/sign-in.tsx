@@ -295,6 +295,8 @@ export default function SignInScreen() {
         return;
       }
 
+      console.log("LOGIN JWT TOKEN:", token);
+
       await SecureStore.setItemAsync("auth_token", token);
       await SecureStore.setItemAsync("auth_user", JSON.stringify(json?.user || {}));
 

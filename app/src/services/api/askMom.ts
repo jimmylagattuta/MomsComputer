@@ -1,6 +1,7 @@
 // app/src/services/api/askMom.ts
 import * as SecureStore from "expo-secure-store";
-import { postJson } from "./client";
+import type { ComposerImage } from "../../screens/AskMom/components/types";
+import { API_BASE, postJson } from "./client";
 
 export type ContactDraft = {
   sms_body: string;
@@ -42,13 +43,59 @@ type PostJsonEnvelope<T = any> = {
   json: T;
 };
 
+async function safeParseJsonFromResponse(res: Response) {
+  const text = await res.text();
+  let json: any = null;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {}
+  return { text, json };
+}
+
 export async function askMom(
   text: string,
-  conversationId?: number
+  conversationId?: number,
+  images: ComposerImage[] = []
 ): Promise<AskMomResponse> {
   const token = await SecureStore.getItemAsync("auth_token");
   if (!token) throw new Error("Missing auth token");
 
+  // ✅ If images exist -> multipart
+  if (images.length > 0) {
+    const fd = new FormData();
+
+    fd.append("text", text || "");
+    if (conversationId) fd.append("conversation_id", String(conversationId));
+
+    images.forEach((img) => {
+      fd.append("images[]", {
+        uri: img.uri,
+        name: img.name,
+        type: img.type,
+      } as any);
+    });
+
+    console.log("ASK MOM multipart images:", images.map((i) => i.name));
+
+    const res = await fetch(`${API_BASE}/v1/ask_mom`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        // ❌ DO NOT set Content-Type manually for FormData in React Native
+      },
+      body: fd as any,
+    });
+
+    const { json } = await safeParseJsonFromResponse(res);
+
+    if (!res.ok) {
+      throw new Error(`AskMom failed (${res.status})`);
+    }
+
+    return json as AskMomResponse;
+  }
+
+  // ✅ No images -> keep your existing JSON path
   const payload: any = { text };
   if (conversationId) payload.conversation_id = conversationId;
 

@@ -57,6 +57,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // ...but if you already have a token, treat as authed too (prevents bounce)
         const token = await SecureStore.getItemAsync("auth_token");
         if (token) {
+          console.log("JWT TOKEN:", token);
           await AsyncStorage.setItem(STORAGE_KEY, "1");
           setIsAuthed(true);
           return;

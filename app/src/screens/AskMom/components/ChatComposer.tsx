@@ -2,6 +2,8 @@
 import { Ionicons } from "@expo/vector-icons";
 import React, { useMemo, useRef, useState } from "react";
 import {
+  ActivityIndicator,
+  Image,
   Modal,
   Pressable,
   StyleSheet,
@@ -10,6 +12,7 @@ import {
   View,
 } from "react-native";
 import { BRAND, FONT } from "../theme";
+import ImagePreviewModal from "./ImagePreviewModal";
 
 type SpellResult = {
   corrected: string;
@@ -51,7 +54,7 @@ function simpleSpellFix(input: string): SpellResult {
   ];
   for (const [re, rep] of rules) s = s.replace(re, rep);
 
-  // first letter cap (tiny polish)
+  // first letter cap
   s = s.replace(/^\s*([a-z])/, (m, c) => m.replace(c, c.toUpperCase()));
 
   // remove space before punctuation
@@ -64,6 +67,12 @@ function simpleSpellFix(input: string): SpellResult {
   return { corrected: s, changed, meaningfulChanged };
 }
 
+// ✅ Optional image shape (local preview only for now)
+export type ComposerImage = {
+  uri: string;
+  loading?: boolean; // ✅ show placeholder + spinner until thumbnail loads
+};
+
 export default function ChatComposer({
   value,
   onChange,
@@ -73,6 +82,12 @@ export default function ChatComposer({
   loading,
   hasConversation,
   messagesCount,
+
+  images = [],
+  onPressAddImage,
+  onRemoveImage,
+
+  onImageLoaded,
 }: {
   value: string;
   onChange: (t: string) => void;
@@ -82,6 +97,12 @@ export default function ChatComposer({
   loading: boolean;
   hasConversation: boolean;
   messagesCount?: number;
+
+  images?: ComposerImage[];
+  onPressAddImage?: () => void;
+  onRemoveImage?: (uri: string) => void;
+
+  onImageLoaded?: (uri: string) => void;
 }) {
   const [confirmOpen, setConfirmOpen] = useState(false);
 
@@ -89,23 +110,38 @@ export default function ChatComposer({
   const [spellOriginal, setSpellOriginal] = useState("");
   const [spellSuggested, setSpellSuggested] = useState("");
 
+  // ✅ full-screen preview state
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewUri, setPreviewUri] = useState<string | null>(null);
+
   const sendGuardRef = useRef(false);
+
+  const safeImages = Array.isArray(images) ? images : [];
+  const hasImages = safeImages.length > 0;
 
   const isClearAction = useMemo(() => {
     if (typeof messagesCount === "number") return messagesCount > 0;
     return !!hasConversation;
   }, [messagesCount, hasConversation]);
 
+  const openPreview = (uri: string) => {
+    setPreviewUri(uri);
+    setPreviewOpen(true);
+  };
+
+  const closePreview = () => {
+    setPreviewOpen(false);
+    setPreviewUri(null);
+  };
+
   const actuallySend = (textToSend: string) => {
     onChange(textToSend);
 
     requestAnimationFrame(() => {
       onSend();
-
       requestAnimationFrame(() => {
         onChange("");
       });
-
       sendGuardRef.current = false;
     });
   };
@@ -114,14 +150,18 @@ export default function ChatComposer({
     if (sendGuardRef.current) return;
     if (disabled || loading) return;
 
-    const trimmed = value.trim();
-    if (!trimmed) return;
+    const trimmed = (value || "").trim();
+    if (!trimmed && !hasImages) return;
 
     sendGuardRef.current = true;
 
+    if (!trimmed && hasImages) {
+      actuallySend("");
+      return;
+    }
+
     const { corrected, changed, meaningfulChanged } = simpleSpellFix(trimmed);
 
-    // Only interrupt the user for REAL changes
     if (changed && meaningfulChanged) {
       setSpellOriginal(trimmed);
       setSpellSuggested(corrected);
@@ -129,7 +169,6 @@ export default function ChatComposer({
       return;
     }
 
-    // Formatting-only change? Send silently.
     actuallySend(changed ? corrected : trimmed);
   };
 
@@ -158,6 +197,46 @@ export default function ChatComposer({
 
   return (
     <View style={styles.wrap}>
+      {/* ✅ Full-screen zoomable preview */}
+      <ImagePreviewModal open={previewOpen} uri={previewUri} onClose={closePreview} />
+
+      {hasImages && (
+        <View style={styles.previewRow}>
+          {safeImages.map((img) => (
+            <Pressable
+              key={img.uri}
+              onPress={() => openPreview(img.uri)}
+              style={({ pressed }) => [
+                styles.previewTile,
+                pressed ? { opacity: 0.92, transform: [{ scale: 0.99 }] } : null,
+              ]}
+            >
+              <Image
+                source={{ uri: img.uri }}
+                style={styles.previewImg}
+                onLoadEnd={() => onImageLoaded?.(img.uri)}
+              />
+
+              {img.loading ? (
+                <View style={styles.previewLoadingOverlay} pointerEvents="none">
+                  <ActivityIndicator color="#FFFFFF" />
+                </View>
+              ) : null}
+
+              {onRemoveImage && (
+                <Pressable
+                  onPress={() => onRemoveImage(img.uri)}
+                  hitSlop={10}
+                  style={styles.previewRemove}
+                >
+                  <Ionicons name="close-circle" size={18} color="#FFFFFF" />
+                </Pressable>
+              )}
+            </Pressable>
+          ))}
+        </View>
+      )}
+
       {/* Spellcheck modal */}
       <Modal
         visible={spellOpen}
@@ -168,7 +247,7 @@ export default function ChatComposer({
         onRequestClose={closeSpellModal}
       >
         <Pressable style={styles.modalBackdrop} onPress={closeSpellModal}>
-          <Pressable style={styles.modalCard} onPress={() => {}}>
+          <Pressable style={styles.modalCard}>
             <View style={styles.modalHeader}>
               <Ionicons name="sparkles" size={22} color={BRAND.blue} />
               <Text style={styles.modalTitle}>Fix typos before sending?</Text>
@@ -191,22 +270,14 @@ export default function ChatComposer({
             <View style={styles.modalActions}>
               <Pressable
                 onPress={handleSendOriginal}
-                style={({ pressed }) => [
-                  styles.modalBtn,
-                  styles.modalBtnGhost,
-                  pressed && styles.modalBtnPressed,
-                ]}
+                style={[styles.modalBtn, styles.modalBtnGhost]}
               >
                 <Text style={styles.modalBtnGhostText}>Send original</Text>
               </Pressable>
 
               <Pressable
                 onPress={handleSendCorrected}
-                style={({ pressed }) => [
-                  styles.modalBtn,
-                  styles.modalBtnPrimary,
-                  pressed && styles.modalBtnPressed,
-                ]}
+                style={[styles.modalBtn, styles.modalBtnPrimary]}
               >
                 <Ionicons name="checkmark" size={16} color="#FFFFFF" />
                 <Text style={styles.modalBtnPrimaryText}>Send corrected</Text>
@@ -226,7 +297,7 @@ export default function ChatComposer({
         onRequestClose={handleCancelClear}
       >
         <Pressable style={styles.modalBackdrop} onPress={handleCancelClear}>
-          <Pressable style={styles.modalCard} onPress={() => {}}>
+          <Pressable style={styles.modalCard}>
             <View style={styles.modalHeader}>
               <Ionicons
                 name={isClearAction ? "warning" : "information-circle"}
@@ -249,35 +320,23 @@ export default function ChatComposer({
                 <>
                   <Pressable
                     onPress={handleCancelClear}
-                    style={({ pressed }) => [
-                      styles.modalBtn,
-                      styles.modalBtnGhost,
-                      pressed && styles.modalBtnPressed,
-                    ]}
+                    style={[styles.modalBtn, styles.modalBtnGhost]}
                   >
                     <Text style={styles.modalBtnGhostText}>Cancel</Text>
                   </Pressable>
 
                   <Pressable
                     onPress={handleConfirmClear}
-                    style={({ pressed }) => [
-                      styles.modalBtn,
-                      styles.modalBtnDanger,
-                      pressed && styles.modalBtnPressed,
-                    ]}
+                    style={[styles.modalBtn, styles.modalBtnDanger]}
                   >
-                    <Ionicons name="trash" size={16} color="#f70a0aff" />
+                    <Ionicons name="trash" size={16} color="#000" />
                     <Text style={styles.modalBtnDangerText}>Start Fresh</Text>
                   </Pressable>
                 </>
               ) : (
                 <Pressable
                   onPress={handleCancelClear}
-                  style={({ pressed }) => [
-                    styles.modalBtn,
-                    styles.modalBtnGhost,
-                    pressed && styles.modalBtnPressed,
-                  ]}
+                  style={[styles.modalBtn, styles.modalBtnGhost]}
                 >
                   <Text style={styles.modalBtnGhostText}>OK</Text>
                 </Pressable>
@@ -287,6 +346,7 @@ export default function ChatComposer({
         </Pressable>
       </Modal>
 
+      {/* INPUT ROW */}
       <View style={styles.row}>
         <TextInput
           value={value}
@@ -301,31 +361,40 @@ export default function ChatComposer({
           onSubmitEditing={handleSendPress}
         />
 
-        <Pressable
-          onPress={handleSendPress}
-          disabled={disabled}
-          style={({ pressed }) => [
-            styles.sendBtn,
-            pressed && styles.sendBtnPressed,
-            disabled && styles.sendBtnDisabled,
-          ]}
-        >
-          {loading ? (
-            <Ionicons name="ellipsis-horizontal" size={18} color="#FFFFFF" />
-          ) : (
-            <Ionicons name="sparkles" size={18} color="#FFFFFF" />
-          )}
-        </Pressable>
+        <View style={styles.rightActions}>
+          <Pressable
+            onPress={onPressAddImage}
+            disabled={!onPressAddImage}
+            hitSlop={10}
+            style={({ pressed }) => [
+              styles.attachBtn,
+              pressed && { opacity: 0.92 },
+              !onPressAddImage && { opacity: 0.45 },
+            ]}
+          >
+            <Ionicons name="image" size={18} color={BRAND.blue} />
+          </Pressable>
+
+          <Pressable
+            onPress={handleSendPress}
+            disabled={disabled && !hasImages}
+            style={({ pressed }) => [
+              styles.sendBtn,
+              pressed && styles.sendBtnPressed,
+              disabled && !hasImages && styles.sendBtnDisabled,
+            ]}
+          >
+            {loading ? (
+              <Ionicons name="ellipsis-horizontal" size={18} color="#FFFFFF" />
+            ) : (
+              <Ionicons name="sparkles" size={18} color="#FFFFFF" />
+            )}
+          </Pressable>
+        </View>
       </View>
 
       <View style={styles.metaRow}>
-        <Pressable
-          onPress={handleClearPress}
-          style={({ pressed }) => [
-            styles.clearBtn,
-            pressed && styles.clearBtnPressed,
-          ]}
-        >
+        <Pressable onPress={handleClearPress} style={styles.clearBtn}>
           <Text style={styles.clearText}>Clear</Text>
         </Pressable>
 
@@ -346,12 +415,72 @@ const styles = StyleSheet.create({
     paddingTop: 10,
     paddingBottom: 8,
   },
+
+  previewRow: {
+    flexDirection: "row",
+    gap: 10,
+    paddingHorizontal: 2,
+    paddingBottom: 10,
+    flexWrap: "wrap",
+  },
+  previewTile: {
+    width: 64,
+    height: 64,
+    borderRadius: 14,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    backgroundColor: "#F8FAFC",
+    position: "relative",
+  },
+  previewImg: { width: "100%", height: "100%", resizeMode: "cover" },
+  previewRemove: {
+    position: "absolute",
+    top: 4,
+    right: 4,
+    width: 20,
+    height: 20,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(0,0,0,0.35)",
+  },
+
+  previewLoadingOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(0,0,0,0.22)",
+  },
+
   row: {
     flexDirection: "row",
     alignItems: "flex-end",
     gap: 10,
     paddingHorizontal: 2,
   },
+
+  rightActions: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    gap: 8,
+  },
+
+  attachBtn: {
+    height: 48,
+    width: 48,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: BRAND.blueSoft,
+    borderWidth: 1,
+    borderColor: BRAND.blueBorder,
+  },
+
   input: {
     flex: 1,
     minHeight: 48,
@@ -367,6 +496,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     backgroundColor: "#FFFFFF",
   },
+
   sendBtn: {
     height: 48,
     width: 48,
@@ -377,12 +507,14 @@ const styles = StyleSheet.create({
   },
   sendBtnPressed: { opacity: 0.92, transform: [{ scale: 0.99 }] },
   sendBtnDisabled: { opacity: 0.45 },
+
   metaRow: {
     marginTop: 8,
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
   },
+
   clearBtn: {
     paddingVertical: 6,
     paddingHorizontal: 10,
@@ -391,7 +523,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: BRAND.blueBorder,
   },
-  clearBtnPressed: { opacity: 0.9, transform: [{ scale: 0.99 }] },
   clearText: {
     color: BRAND.blue,
     fontFamily: FONT.medium,
@@ -404,6 +535,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 16,
   },
+
   modalBackdrop: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.62)",
@@ -467,10 +599,6 @@ const styles = StyleSheet.create({
     backgroundColor: BRAND.red,
     borderColor: BRAND.red,
   },
-  modalBtnPressed: {
-    opacity: 0.92,
-    transform: [{ scale: 0.99 }],
-  },
   modalBtnGhostText: {
     fontFamily: FONT.medium,
     fontSize: 14,
@@ -484,7 +612,7 @@ const styles = StyleSheet.create({
   modalBtnDangerText: {
     fontFamily: FONT.medium,
     fontSize: 14,
-    color: "#000000ff",
+    color: "#000",
   },
   spellBox: {
     borderWidth: 1,

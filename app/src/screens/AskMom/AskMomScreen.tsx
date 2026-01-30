@@ -1,4 +1,5 @@
 // app/src/screens/AskMom/AskMomScreen.tsx
+import * as ImagePicker from "expo-image-picker";
 import { useRouter } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import {
@@ -15,7 +16,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import AskMomHeader from "./components/AskMomHeader";
-import ChatComposer from "./components/ChatComposer";
+import ChatComposer, { ComposerImage } from "./components/ChatComposer";
 import ChatMessageRow from "./components/ChatMessageRow";
 import HistoryDrawer from "./components/HistoryDrawer";
 import HomeFooterButton from "./components/HomeFooterButton";
@@ -54,12 +55,22 @@ function pickThinkingText() {
   return THINKING_OPTIONS[Math.floor(Math.random() * THINKING_OPTIONS.length)];
 }
 
+// ✅ Pre-chat opener (single phrase)
+const PRECHAT_OPENER =
+  "Okay, sweetheart. Take it slow and tell me what’s in front of you.";
+
+// ✅ Max image attachments
+const MAX_IMAGES = 5;
+
 export default function AskMomScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
   const scrollRef = useRef<ScrollView | null>(null);
   const thinkingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // ✅ Pre-chat seeding guard (prevents duplicate opener)
+  const prechatSeededRef = useRef(false);
 
   /** ✅ History drawer state */
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -74,6 +85,10 @@ export default function AskMomScreen() {
   const [conversationId, setConversationId] = useState<number | undefined>(
     undefined
   );
+
+  // ✅ local-only selected images for the composer (UI + preview strip)
+  // Each selected image starts with loading: true so tiles appear instantly.
+  const [composerImages, setComposerImages] = useState<ComposerImage[]>([]);
 
   const hasConversation = messages.length > 0;
 
@@ -153,6 +168,24 @@ export default function AskMomScreen() {
     };
   }, [kbHeight, insets.bottom]);
 
+  // ✅ Auto pre-chat opener (only once on a fresh thread)
+  useEffect(() => {
+    if (prechatSeededRef.current) return;
+
+    const isFreshThread = messages.length === 0 && !conversationId && !loading;
+    if (!isFreshThread) return;
+
+    prechatSeededRef.current = true;
+
+    const openerMsg: ChatMessage = {
+      id: uid(),
+      role: "assistant",
+      text: PRECHAT_OPENER,
+      pending: false,
+    };
+
+    setMessages([openerMsg]);
+  }, [messages.length, conversationId, loading]);
 
   // 🔁 Animated "Thinking…" dots
   const startThinkingAnimation = (thinkingId: string, base: string) => {
@@ -176,6 +209,8 @@ export default function AskMomScreen() {
   };
 
   const handleSelectConversation = async (id: number) => {
+    prechatSeededRef.current = true;
+
     setDrawerOpen(false);
     stopThinkingAnimation();
     setLoading(true);
@@ -197,6 +232,8 @@ export default function AskMomScreen() {
         }));
 
       setMessages(mapped);
+      setComposerImages([]); // ✅ reset local attachments on thread switch
+      setInput("");
 
       setTimeout(() => scrollToBottom(false), 50);
     } catch (e: any) {
@@ -210,9 +247,73 @@ export default function AskMomScreen() {
     }
   };
 
+  // ✅ Called by ChatComposer when a thumbnail finishes decoding.
+  const handleImageLoaded = (uri: string) => {
+    setComposerImages((prev) =>
+      prev.map((im) => (im.uri === uri ? { ...im, loading: false } : im))
+    );
+  };
+
+  // ✅ Opens photo album and lets user select up to 5 images total (across multiple opens)
+  const handlePressAddImage = async () => {
+    try {
+      const remaining = Math.max(0, MAX_IMAGES - composerImages.length);
+      if (remaining <= 0) {
+        Alert.alert("Max 5 images", "Remove one to add another.");
+        return;
+      }
+
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert(
+          "Photo access needed",
+          "Please allow photo library access to attach images."
+        );
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsMultipleSelection: true,
+        selectionLimit: remaining, // iOS 14+; on some Android pickers this may behave like single-pick
+        quality: 0.9,
+      });
+
+      if (result.canceled) return;
+
+      const picked: ComposerImage[] = (result.assets || [])
+        .map((a) => a?.uri)
+        .filter(Boolean)
+        .map((uri) => ({ uri, loading: true })); // ✅ start as loading so placeholders appear instantly
+
+      setComposerImages((prev) => {
+        const merged = [...prev];
+
+        for (const img of picked) {
+          if (merged.some((m) => m.uri === img.uri)) continue;
+          if (merged.length >= MAX_IMAGES) break;
+          merged.push(img);
+        }
+
+        return merged;
+      });
+
+      setTimeout(() => scrollToBottom(true), 30);
+    } catch (e: any) {
+      console.log("IMAGE PICK FAILED (AskMomScreen)", e);
+      Alert.alert("Couldn’t open photos", "Please try again.");
+    }
+  };
+
+  const handleRemoveImage = (uri: string) => {
+    setComposerImages((prev) => prev.filter((im) => im.uri !== uri));
+  };
+
   const handleSend = async () => {
     const text = input.trim();
-    if (!text) {
+
+    // ✅ allow sending images with no text
+    if (!text && composerImages.length === 0) {
       Alert.alert(
         "Type a message",
         "Ask anything about what you’re seeing or what happened."
@@ -224,7 +325,15 @@ export default function AskMomScreen() {
     setInput("");
     setLoading(true);
 
-    const userMsg: ChatMessage = { id: uid(), role: "user", text };
+    const userMsg: ChatMessage = {
+      id: uid(),
+      role: "user",
+      text: text || "(image)",
+      images: composerImages.length ? composerImages : [],
+    };
+
+    // ✅ clear local attachments once queued
+    setComposerImages([]);
 
     const thinkingId = uid();
     const thinkingBase = pickThinkingText();
@@ -253,17 +362,17 @@ export default function AskMomScreen() {
         prev.map((m) =>
           m.id === thinkingId
             ? {
-              ...m,
-              text: assistantText,
-              pending: false,
+                ...m,
+                text: assistantText,
+                pending: false,
 
-              // ✅ attach contact panel fields onto assistant message
-              show_contact_panel: !!res.show_contact_panel,
-              escalation_reason: res.escalation_reason || null,
-              contact_actions: res.contact_actions || null,
-              contact_draft: res.contact_draft || null,
-              contact_targets: res.contact_targets || null,
-            }
+                // ✅ attach contact panel fields onto assistant message
+                show_contact_panel: !!res.show_contact_panel,
+                escalation_reason: res.escalation_reason || null,
+                contact_actions: res.contact_actions || null,
+                contact_draft: res.contact_draft || null,
+                contact_targets: res.contact_targets || null,
+              }
             : m
         )
       );
@@ -282,11 +391,11 @@ export default function AskMomScreen() {
         prev.map((m) =>
           m.id === thinkingId
             ? {
-              ...m,
-              text:
-                "I couldn’t reach the server right now. Please try again.\n\n(If this is urgent or involves money/codes, don’t proceed—tell me what it said.)",
-              pending: false,
-            }
+                ...m,
+                text:
+                  "I couldn’t reach the server right now. Please try again.\n\n(If this is urgent or involves money/codes, don’t proceed—tell me what it said.)",
+                pending: false,
+              }
             : m
         )
       );
@@ -297,9 +406,12 @@ export default function AskMomScreen() {
   };
 
   const handleClear = () => {
+    prechatSeededRef.current = false;
+
     stopThinkingAnimation();
     Keyboard.dismiss();
     setInput("");
+    setComposerImages([]); // ✅ clear attachments too
     setMessages([]);
     setLoading(false);
     setConversationId(undefined);
@@ -315,7 +427,9 @@ export default function AskMomScreen() {
    * - iOS safe area bottom
    */
   const footerSafePad =
-    Platform.OS === "android" ? Math.max(insets.bottom, 12) + 10 : insets.bottom;
+    Platform.OS === "android"
+      ? Math.max(insets.bottom, 12) + 10
+      : insets.bottom;
 
   // We ONLY hide the home footer button while typing.
   const showHomeFooterButton = !keyboardOpen;
@@ -355,7 +469,12 @@ export default function AskMomScreen() {
           {hasConversation ? (
             <View style={styles.conversation}>
               {messages.map((m, idx) => (
-                <ChatMessageRow key={m.id} msg={m} thread={messages} index={idx} />
+                <ChatMessageRow
+                  key={m.id}
+                  msg={m}
+                  thread={messages}
+                  index={idx}
+                />
               ))}
             </View>
           ) : (
@@ -378,10 +497,14 @@ export default function AskMomScreen() {
             onChange={setInput}
             onSend={handleSend}
             onClear={handleClear}
-            disabled={loading || !input.trim()}
+            disabled={loading || (!input.trim() && composerImages.length === 0)}
             loading={loading}
             hasConversation={hasConversation}
             messagesCount={messages.length}
+            images={composerImages}
+            onPressAddImage={handlePressAddImage}
+            onRemoveImage={handleRemoveImage}
+            onImageLoaded={handleImageLoaded} // ✅ NEW: clears placeholder spinners per-tile
           />
 
           {showHomeFooterButton ? (

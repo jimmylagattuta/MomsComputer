@@ -18,13 +18,20 @@ export type ContactTargets = {
   email?: string | null;
 };
 
+export type ChatImage = {
+  uri: string;
+};
+
 export type ChatMessage = {
   id: string;
   role: ChatRole;
   text: string;
   pending?: boolean; // true for "Thinking..." placeholder
 
-  // ✅ NEW (added; no removals)
+  // ✅ NEW: local UI images (optional)
+  images?: ChatImage[];
+
+  // ✅ Contact panel fields
   show_contact_panel?: boolean;
   escalation_reason?: string | null;
   contact_actions?: ContactActions | null;
