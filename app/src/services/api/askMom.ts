@@ -29,18 +29,17 @@ export type AskMomResponse = {
   escalate_suggested: boolean;
   confidence: number;
 
-  // ✅ NEW (added; backend may or may not include these)
+  conversation_title?: string | null;
+
   show_contact_panel?: boolean;
   escalation_reason?: string | null;
   contact_actions?: ContactActions | null;
   contact_draft?: ContactDraft | null;
   contact_targets?: ContactTargets | null;
-};
 
-type PostJsonEnvelope<T = any> = {
-  ok: boolean;
-  status: number;
-  json: T;
+  // ✅ returned by backend in your controller
+  user_message_id?: number;
+  user_images?: string[];
 };
 
 async function safeParseJsonFromResponse(res: Response) {
@@ -76,6 +75,10 @@ export async function askMom(
   conversationId?: number,
   images: ComposerImage[] = []
 ): Promise<AskMomResponse> {
+  console.log("📡 askMom() called. images length:", images?.length || 0);
+  console.log("📡 askMom() convoId:", conversationId);
+  console.log("📡 askMom() text:", JSON.stringify(text));
+
   const token = await SecureStore.getItemAsync("auth_token");
   if (!token) throw new Error("Missing auth token");
 
@@ -105,10 +108,12 @@ export async function askMom(
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
+        Accept: "application/json", // ✅ add this
         // ❌ DO NOT set Content-Type manually for FormData in React Native
       },
       body: fd as any,
     });
+
 
     const { json } = await safeParseJsonFromResponse(res);
 

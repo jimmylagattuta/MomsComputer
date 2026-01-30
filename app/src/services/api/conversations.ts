@@ -19,7 +19,11 @@ export type ConversationMessageDTO = {
   content_type: string | null;
   risk_level: string | null;
   created_at: string;
+
+  // ✅ add this:
+  images?: string[];
 };
+
 
 export type ConversationDetailDTO = {
   conversation: ConversationSummary;

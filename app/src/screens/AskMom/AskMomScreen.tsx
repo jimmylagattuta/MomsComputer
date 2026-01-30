@@ -252,6 +252,16 @@ export default function AskMomScreen() {
 
       console.log("LOADED CONVERSATION DETAIL (AskMomScreen)", detail);
 
+      console.log(
+        "LOADED MESSAGE IMAGES (AskMomScreen)",
+        (detail.messages || []).map((m) => ({
+          id: m.id,
+          sender: m.sender_type,
+          images: (m as any).images,
+        }))
+      );
+
+
       setConversationId(id);
 
       const mapped: ChatMessage[] = (detail.messages || [])
@@ -261,7 +271,13 @@ export default function AskMomScreen() {
           role: roleFromSenderType(String(m.sender_type || "")) as any,
           text: String(m.content || ""),
           pending: false,
+
+          // ✅ THIS IS THE KEY LINE
+          images: Array.isArray((m as any).images)
+            ? (m as any).images.map((uri: string) => ({ uri }))
+            : [],
         }));
+
 
       setMessages(mapped);
       setComposerImages([]); // ✅ reset local attachments on thread switch
@@ -388,6 +404,13 @@ export default function AskMomScreen() {
 
     try {
       // ✅ PASS IMAGES HERE
+      console.log("🔥 handleSend called");
+      console.log("text:", JSON.stringify(text));
+      console.log("conversationId:", conversationId);
+      console.log("composerImages (state):", composerImages.map((i) => i.uri));
+      console.log("imagesToSend (snapshot):", imagesToSend.map((i) => i.uri));
+      console.log("imagesToSend length:", imagesToSend.length);
+
       const res = await askMom(text, conversationId, imagesToSend);
 
       if (!conversationId) setConversationId(res.conversation_id);
@@ -399,17 +422,17 @@ export default function AskMomScreen() {
         prev.map((m) =>
           m.id === thinkingId
             ? {
-                ...m,
-                text: assistantText,
-                pending: false,
+              ...m,
+              text: assistantText,
+              pending: false,
 
-                // ✅ attach contact panel fields onto assistant message
-                show_contact_panel: !!res.show_contact_panel,
-                escalation_reason: res.escalation_reason || null,
-                contact_actions: res.contact_actions || null,
-                contact_draft: res.contact_draft || null,
-                contact_targets: res.contact_targets || null,
-              }
+              // ✅ attach contact panel fields onto assistant message
+              show_contact_panel: !!res.show_contact_panel,
+              escalation_reason: res.escalation_reason || null,
+              contact_actions: res.contact_actions || null,
+              contact_draft: res.contact_draft || null,
+              contact_targets: res.contact_targets || null,
+            }
             : m
         )
       );
@@ -428,11 +451,11 @@ export default function AskMomScreen() {
         prev.map((m) =>
           m.id === thinkingId
             ? {
-                ...m,
-                text:
-                  "I couldn’t reach the server right now. Please try again.\n\n(If this is urgent or involves money/codes, don’t proceed—tell me what it said.)",
-                pending: false,
-              }
+              ...m,
+              text:
+                "I couldn’t reach the server right now. Please try again.\n\n(If this is urgent or involves money/codes, don’t proceed—tell me what it said.)",
+              pending: false,
+            }
             : m
         )
       );
