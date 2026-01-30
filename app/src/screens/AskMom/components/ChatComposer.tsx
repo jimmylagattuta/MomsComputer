@@ -67,7 +67,7 @@ function simpleSpellFix(input: string): SpellResult {
   return { corrected: s, changed, meaningfulChanged };
 }
 
-// ✅ Optional image shape (local preview only for now)
+// ✅ Local preview image shape (matches AskMomScreen usage)
 export type ComposerImage = {
   uri: string;
   loading?: boolean; // ✅ show placeholder + spinner until thumbnail loads
@@ -135,6 +135,7 @@ export default function ChatComposer({
   };
 
   const actuallySend = (textToSend: string) => {
+    // keep the existing behavior: ensure screen state matches what we send
     onChange(textToSend);
 
     requestAnimationFrame(() => {
@@ -151,6 +152,8 @@ export default function ChatComposer({
     if (disabled || loading) return;
 
     const trimmed = (value || "").trim();
+
+    // ✅ allow images-only send
     if (!trimmed && !hasImages) return;
 
     sendGuardRef.current = true;
@@ -198,7 +201,11 @@ export default function ChatComposer({
   return (
     <View style={styles.wrap}>
       {/* ✅ Full-screen zoomable preview */}
-      <ImagePreviewModal open={previewOpen} uri={previewUri} onClose={closePreview} />
+      <ImagePreviewModal
+        open={previewOpen}
+        uri={previewUri}
+        onClose={closePreview}
+      />
 
       {hasImages && (
         <View style={styles.previewRow}>

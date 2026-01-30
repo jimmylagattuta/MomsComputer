@@ -96,6 +96,13 @@ export default function AskMomScreen() {
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   const kbHeight = useRef(new Animated.Value(0)).current;
 
+  // ✅ IMPORTANT: numeric lift for padding calculations
+  const [keyboardLift, setKeyboardLift] = useState(0);
+
+  // ✅ Measure the FULL bottom stack (composer + optional home button)
+  // so ScrollView padding is snug and never blocks the last message.
+  const [bottomStackHeight, setBottomStackHeight] = useState(0);
+
   const animateKb = (to: number, duration = 220) => {
     Animated.timing(kbHeight, {
       toValue: to,
@@ -154,11 +161,13 @@ export default function AskMomScreen() {
       const lift = Platform.OS === "ios" ? iosLift : androidLift;
 
       setKeyboardOpen(true);
+      setKeyboardLift(lift);
       animateKb(lift, Platform.OS === "ios" ? 220 : 160);
     });
 
     const hideSub = Keyboard.addListener(hideEvent as any, () => {
       setKeyboardOpen(false);
+      setKeyboardLift(0);
       animateKb(0, Platform.OS === "ios" ? 220 : 140);
     });
 
@@ -167,6 +176,29 @@ export default function AskMomScreen() {
       hideSub.remove();
     };
   }, [kbHeight, insets.bottom]);
+
+  /**
+   * ✅ When keyboard is open, the composer stack is translated upward
+   * which OVERLAYS the ScrollView (it does not resize it).
+   *
+   * So we must:
+   * 1) Add extra ScrollView bottom padding:
+   *    - bottomStackHeight (input/buttons)
+   *    - plus keyboardLift (because the overlay is lifted upward into the chat)
+   * 2) Then scroll to bottom.
+   */
+  useEffect(() => {
+    if (!keyboardOpen) return;
+
+    scrollToBottom(false);
+    const t1 = setTimeout(() => scrollToBottom(false), 50);
+    const t2 = setTimeout(() => scrollToBottom(false), 140);
+
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
+  }, [keyboardOpen, keyboardLift, bottomStackHeight]);
 
   // ✅ Auto pre-chat opener (only once on a fresh thread)
   useEffect(() => {
@@ -321,6 +353,10 @@ export default function AskMomScreen() {
       return;
     }
 
+    // ✅ IMPORTANT: snapshot images BEFORE clearing them,
+    // and pass them into askMom(...) so it uses multipart.
+    const imagesToSend = [...composerImages];
+
     Keyboard.dismiss();
     setInput("");
     setLoading(true);
@@ -329,7 +365,7 @@ export default function AskMomScreen() {
       id: uid(),
       role: "user",
       text: text || "(image)",
-      images: composerImages.length ? composerImages : [],
+      images: imagesToSend.length ? imagesToSend : [],
     };
 
     // ✅ clear local attachments once queued
@@ -351,7 +387,8 @@ export default function AskMomScreen() {
     startThinkingAnimation(thinkingId, thinkingBase);
 
     try {
-      const res = await askMom(text, conversationId);
+      // ✅ PASS IMAGES HERE
+      const res = await askMom(text, conversationId, imagesToSend);
 
       if (!conversationId) setConversationId(res.conversation_id);
 
@@ -434,11 +471,12 @@ export default function AskMomScreen() {
   // We ONLY hide the home footer button while typing.
   const showHomeFooterButton = !keyboardOpen;
 
-  // Scroll padding should assume composer is always present.
-  // Add extra only when HomeFooterButton is also present.
-  const scrollBottomPad = showHomeFooterButton
-    ? 12 + footerSafePad + 50 + 96
-    : 12 + 96;
+  // ✅ Snug padding:
+  // - exactly the measured bottom stack height (composer + optional home button)
+  // - plus keyboardLift when open (because the stack overlays the chat higher up)
+  // - plus a tiny breathing room so the last bubble doesn't touch the input border
+  const scrollBottomPad =
+    bottomStackHeight + (keyboardOpen ? keyboardLift : 0) + 8;
 
   return (
     <SafeAreaView style={styles.page}>
@@ -492,28 +530,38 @@ export default function AskMomScreen() {
             ],
           }}
         >
-          <ChatComposer
-            value={input}
-            onChange={setInput}
-            onSend={handleSend}
-            onClear={handleClear}
-            disabled={loading || (!input.trim() && composerImages.length === 0)}
-            loading={loading}
-            hasConversation={hasConversation}
-            messagesCount={messages.length}
-            images={composerImages}
-            onPressAddImage={handlePressAddImage}
-            onRemoveImage={handleRemoveImage}
-            onImageLoaded={handleImageLoaded} // ✅ NEW: clears placeholder spinners per-tile
-          />
+          {/* ✅ Measure the FULL stack (composer + optional home button) */}
+          <View
+            onLayout={(e) => {
+              const h = Math.max(0, e?.nativeEvent?.layout?.height || 0);
+              if (h && Math.abs(h - bottomStackHeight) > 2) {
+                setBottomStackHeight(h);
+              }
+            }}
+          >
+            <ChatComposer
+              value={input}
+              onChange={setInput}
+              onSend={handleSend}
+              onClear={handleClear}
+              disabled={loading || (!input.trim() && composerImages.length === 0)}
+              loading={loading}
+              hasConversation={hasConversation}
+              messagesCount={messages.length}
+              images={composerImages}
+              onPressAddImage={handlePressAddImage}
+              onRemoveImage={handleRemoveImage}
+              onImageLoaded={handleImageLoaded} // ✅ clears placeholder spinners per-tile
+            />
 
-          {showHomeFooterButton ? (
-            <View style={{ paddingBottom: footerSafePad }}>
-              <HomeFooterButton onPress={() => router.replace("/(app)")} />
-            </View>
-          ) : (
-            <View style={{ height: 8 }} />
-          )}
+            {showHomeFooterButton ? (
+              <View style={{ paddingBottom: footerSafePad }}>
+                <HomeFooterButton onPress={() => router.replace("/(app)")} />
+              </View>
+            ) : (
+              <View style={{ height: 8 }} />
+            )}
+          </View>
         </Animated.View>
       </View>
     </SafeAreaView>

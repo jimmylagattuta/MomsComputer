@@ -52,6 +52,25 @@ async function safeParseJsonFromResponse(res: Response) {
   return { text, json };
 }
 
+function filenameAndMimeFromUri(uri: string, fallbackIndex = 0) {
+  const filenameFromUri =
+    uri?.split("?")[0]?.split("#")[0]?.split("/").pop() ||
+    `photo-${fallbackIndex}.jpg`;
+
+  const ext = (filenameFromUri.split(".").pop() || "jpg").toLowerCase();
+
+  const mime =
+    ext === "png"
+      ? "image/png"
+      : ext === "webp"
+      ? "image/webp"
+      : ext === "heic"
+      ? "image/heic"
+      : "image/jpeg";
+
+  return { name: filenameFromUri, type: mime };
+}
+
 export async function askMom(
   text: string,
   conversationId?: number,
@@ -67,15 +86,20 @@ export async function askMom(
     fd.append("text", text || "");
     if (conversationId) fd.append("conversation_id", String(conversationId));
 
-    images.forEach((img) => {
+    images.forEach((img, idx) => {
+      const uri = (img as any)?.uri;
+      if (!uri) return;
+
+      const { name, type } = filenameAndMimeFromUri(uri, idx);
+
       fd.append("images[]", {
-        uri: img.uri,
-        name: img.name,
-        type: img.type,
+        uri,
+        name,
+        type,
       } as any);
     });
 
-    console.log("ASK MOM multipart images:", images.map((i) => i.name));
+    console.log("ASK MOM multipart images:", images.map((i: any) => i?.uri));
 
     const res = await fetch(`${API_BASE}/v1/ask_mom`, {
       method: "POST",
