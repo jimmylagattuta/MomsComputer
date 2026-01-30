@@ -53,10 +53,6 @@ export default function ChatMessageRow({
         <Text style={styles.meta}>{isUser ? "You" : "Ask Mom"}</Text>
       </View>
 
-      <View style={[styles.card, isUser ? styles.userCard : styles.momCard]}>
-        <Text style={[styles.text, msg.pending && styles.pendingText]}>{msg.text}</Text>
-      </View>
-
       {/* ✅ thumbnails under the message */}
       {images.length > 0 && (
         <ScrollView
@@ -78,6 +74,10 @@ export default function ChatMessageRow({
           ))}
         </ScrollView>
       )}
+
+      <View style={[styles.card, isUser ? styles.userCard : styles.momCard]}>
+        <Text style={[styles.text, msg.pending && styles.pendingText]}>{msg.text}</Text>
+      </View>
 
       {/* ✅ Inline Contact Mom panel under the assistant message bubble */}
       {isAssistant && !msg.pending && (
