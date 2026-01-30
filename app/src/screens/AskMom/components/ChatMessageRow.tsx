@@ -1,17 +1,12 @@
 // app/src/screens/AskMom/components/ChatMessageRow.tsx
 import React, { useMemo, useState } from "react";
-import {
-  Image,
-  Modal,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { Image, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { BRAND, FONT } from "../theme";
 import ContactMomPanel from "./ContactMomPanel";
+import ImagePreviewModal from "./ImagePreviewModal";
 import type { ChatMessage } from "./types";
+
+type AnyImageShape = string | { uri: string };
 
 export default function ChatMessageRow({
   msg,
@@ -25,32 +20,41 @@ export default function ChatMessageRow({
   const isUser = msg.role === "user";
   const isAssistant = !isUser;
 
-  const images = useMemo(() => msg.images || [], [msg.images]);
-  const [viewerOpen, setViewerOpen] = useState(false);
-  const [viewerUri, setViewerUri] = useState<string | null>(null);
+  // ✅ normalize images so it works whether backend returns ["url", ...]
+  // or your UI returns [{ uri }, ...]
+  const images = useMemo(() => {
+    const raw = (msg as any).images || [];
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map((im: AnyImageShape) => (typeof im === "string" ? { uri: im } : im))
+      .filter((im: any) => !!im?.uri);
+  }, [msg]);
+
+  // ✅ full-screen zoomable preview state
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewUri, setPreviewUri] = useState<string | null>(null);
 
   const openViewer = (uri: string) => {
-    setViewerUri(uri);
-    setViewerOpen(true);
+    setPreviewUri(uri);
+    setPreviewOpen(true);
   };
 
   const closeViewer = () => {
-    setViewerOpen(false);
-    setViewerUri(null);
+    setPreviewOpen(false);
+    setPreviewUri(null);
   };
 
   return (
     <View style={[styles.row, isUser ? styles.rowRight : styles.rowLeft]}>
-      <View
-        style={[styles.metaRow, isUser ? styles.metaRight : styles.metaLeft]}
-      >
+      {/* ✅ Full-screen zoomable preview (ChatGPT style) */}
+      <ImagePreviewModal open={previewOpen} uri={previewUri} onClose={closeViewer} />
+
+      <View style={[styles.metaRow, isUser ? styles.metaRight : styles.metaLeft]}>
         <Text style={styles.meta}>{isUser ? "You" : "Ask Mom"}</Text>
       </View>
 
       <View style={[styles.card, isUser ? styles.userCard : styles.momCard]}>
-        <Text style={[styles.text, msg.pending && styles.pendingText]}>
-          {msg.text}
-        </Text>
+        <Text style={[styles.text, msg.pending && styles.pendingText]}>{msg.text}</Text>
       </View>
 
       {/* ✅ thumbnails under the message */}
@@ -60,19 +64,14 @@ export default function ChatMessageRow({
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={[
             styles.thumbRow,
-            isUser
-              ? { justifyContent: "flex-end" }
-              : { justifyContent: "flex-start" },
+            isUser ? { justifyContent: "flex-end" } : { justifyContent: "flex-start" },
           ]}
         >
           {images.map((im) => (
             <Pressable
               key={im.uri}
               onPress={() => openViewer(im.uri)}
-              style={({ pressed }) => [
-                styles.thumbWrap,
-                pressed && { opacity: 0.92 },
-              ]}
+              style={({ pressed }) => [styles.thumbWrap, pressed && { opacity: 0.92 }]}
             >
               <Image source={{ uri: im.uri }} style={styles.thumb} />
             </Pressable>
@@ -83,37 +82,13 @@ export default function ChatMessageRow({
       {/* ✅ Inline Contact Mom panel under the assistant message bubble */}
       {isAssistant && !msg.pending && (
         <ContactMomPanel
-          visible={!!msg.show_contact_panel}
-          actions={msg.contact_actions}
-          phoneNumber={msg.contact_targets?.phone || null}
-          email={msg.contact_targets?.email || null}
-          draft={msg.contact_draft || null}
+          visible={!!(msg as any).show_contact_panel}
+          actions={(msg as any).contact_actions}
+          phoneNumber={(msg as any).contact_targets?.phone || null}
+          email={(msg as any).contact_targets?.email || null}
+          draft={(msg as any).contact_draft || null}
         />
       )}
-
-      {/* ✅ Fullscreen image viewer */}
-      <Modal
-        visible={viewerOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={closeViewer}
-      >
-        <Pressable style={styles.viewerBackdrop} onPress={closeViewer}>
-          <Pressable style={styles.viewerCard} onPress={() => {}}>
-            {viewerUri ? (
-              <Image source={{ uri: viewerUri }} style={styles.viewerImage} />
-            ) : null}
-
-            <Pressable
-              onPress={closeViewer}
-              style={styles.viewerClose}
-              hitSlop={12}
-            >
-              <Text style={styles.viewerCloseText}>Close</Text>
-            </Pressable>
-          </Pressable>
-        </Pressable>
-      </Modal>
     </View>
   );
 }
@@ -196,42 +171,5 @@ const styles = StyleSheet.create({
     width: "100%",
     height: "100%",
     resizeMode: "cover",
-  },
-
-  viewerBackdrop: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.75)",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 14,
-  },
-
-  viewerCard: {
-    width: "100%",
-    maxWidth: 520,
-    borderRadius: 18,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.18)",
-    backgroundColor: "rgba(0,0,0,0.25)",
-  },
-
-  viewerImage: {
-    width: "100%",
-    height: 520,
-    resizeMode: "contain",
-    backgroundColor: "rgba(0,0,0,0.45)",
-  },
-
-  viewerClose: {
-    paddingVertical: 12,
-    alignItems: "center",
-    backgroundColor: "rgba(255,255,255,0.08)",
-  },
-
-  viewerCloseText: {
-    color: "#FFFFFF",
-    fontFamily: FONT.medium,
-    fontSize: 14,
   },
 });
