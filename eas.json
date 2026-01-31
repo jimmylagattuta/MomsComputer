@@ -1,3 +1,4 @@
+// eas.json
 {
   "cli": {
     "version": ">= 16.28.0",

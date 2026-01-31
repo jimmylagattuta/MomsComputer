@@ -14,7 +14,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { FONT } from "../../../src/theme"; // ✅ add this
+import { FONT } from "../../../src/theme";
 import { BRAND, H_PADDING } from "../AskMom/theme";
 
 const MOM_LOGO_URI =
@@ -65,7 +65,7 @@ export default function TextMomScreen() {
   const MOM_PHONE = "+15625551234";
   const MOM_EMAIL = "mom@example.com";
 
-  const template = `Hey Mom — can you take a look at this? I’m not sure if it’s legit:\n\n[PASTE HERE]\n\nWhat do you think?`;
+  const template = `Hey Mom — can you take a look at this? I’m not sure if it’s legit:\n\n[PASTE HERE]\n\nI’m here with you. Take your time and text me what you’re seeing.`;
 
   const handleOpenText = () => {
     openUrlOrAlert(buildSmsUrl(MOM_PHONE, template));
@@ -78,21 +78,16 @@ export default function TextMomScreen() {
   };
 
   /**
-   * ✅ Make bottom Home button EXACTLY like HomeScreen:
-   * - Absolute footer, same icon/text sizing
-   * - Safe-area aware bottom padding so Android 3-button nav (triangle/circle/square)
-   *   never overlaps it
-   * - Reserve space at bottom so ScrollView content never collides
+   * ✅ Bottom Home button:
+   * - Absolute footer
+   * - Safe-area padded
+   * - ScrollView gets bottom padding so content never hides behind it
    */
   const FOOTER_MIN_HEIGHT = 56;
-
-  // This extra ensures even Android devices with insets.bottom === 0 still get breathing room.
   const footerPaddingBottom = Math.max(insets.bottom, 12) + 10;
-
   const footerTotalHeight = FOOTER_MIN_HEIGHT + footerPaddingBottom;
 
   return (
-    // ✅ Use safe-area-context SafeAreaView and avoid double top padding
     <SafeAreaView style={styles.page} edges={["top", "left", "right"]}>
       <View
         style={[
@@ -110,8 +105,11 @@ export default function TextMomScreen() {
           style={{ flex: 1 }}
           contentContainerStyle={[
             styles.content,
-            // ✅ reserve footer space so content never sits behind it
-            { paddingBottom: footerTotalHeight + 10 },
+            {
+              // ✅ keep everything above the absolute footer
+              paddingBottom: footerTotalHeight + 12,
+              flexGrow: 1, // ✅ allows spacers to fill remaining height
+            },
           ]}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
@@ -155,15 +153,29 @@ export default function TextMomScreen() {
           <View style={styles.tipCard}>
             <Text style={styles.tipTitle}>Tip</Text>
             <Text style={styles.tipBody}>
-              Don’t include passwords, 2FA codes, SSNs, or bank numbers. If it
-              asks for money or gift cards, pause and verify first.
+              I’ll never ask for your password, login codes, SSN, or bank info.
             </Text>
           </View>
+
+          {/* ✅ Spacer ABOVE badge */}
+          <View style={{ flex: 1 }} />
+
+          {/* ✅ Scam Helpline badge (now centered in the remaining space) */}
+          <View style={styles.scamBadge}>
+            <Ionicons name="shield-checkmark" size={44} color={BRAND.blue} />
+            <Text style={styles.scamBadgeText}>
+              Mom&apos;s Scam Helpline{"\n"}Since 2
+              <Text style={styles.scamBadgeZero}>0</Text>13
+            </Text>
+          </View>
+
+          {/* ✅ Spacer BELOW badge (equal flex to the one above) */}
+          <View style={{ flex: 1 }} />
 
           <View style={{ height: 6 }} />
         </ScrollView>
 
-        {/* ✅ Footer matches HomeScreen (bigger + safe-area padded, never overlaps nav) */}
+        {/* ✅ Footer matches HomeScreen */}
         <Pressable
           onPress={() => router.replace("/(app)")}
           style={[
@@ -201,7 +213,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
 
-  // ✅ Header (matches AskMomHeader)
+  // ✅ Header
   headerWrap: {
     flexDirection: "row",
     alignItems: "center",
@@ -329,7 +341,31 @@ const styles = StyleSheet.create({
     fontFamily: FONT.regular,
   },
 
-  // ✅ EXACT HomeScreen-style footer
+  // ✅ Scam badge (in-flow, centered by the equal flex spacers)
+  scamBadge: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 28,
+    gap: 6,
+    backgroundColor: BRAND.screenBg,
+  },
+
+  scamBadgeText: {
+    fontSize: 20,
+    color: BRAND.muted,
+    fontFamily: FONT.medium,
+    textAlign: "center",
+    lineHeight: 22,
+  },
+
+  scamBadgeZero: {
+    fontFamily: Platform.select({
+      ios: "System",
+      android: "sans-serif",
+    }),
+  },
+
+  // ✅ Footer (HomeScreen style)
   footer: {
     position: "absolute",
     left: 0,

@@ -1,4 +1,5 @@
 // app/src/screens/AskMom/AskMomScreen.tsx
+import { Ionicons } from "@expo/vector-icons";
 import * as ImageManipulator from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
 import { useRouter } from "expo-router";
@@ -12,6 +13,7 @@ import {
   SafeAreaView,
   ScrollView,
   StyleSheet,
+  Text,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -58,7 +60,7 @@ function pickThinkingText() {
 
 // ✅ Pre-chat opener (single phrase)
 const PRECHAT_OPENER =
-  "Okay, sweetheart. Take it slow and tell me what’s in front of you.";
+  "I’m here with you. Take your time and tell me what you’re seeing.";
 
 // ✅ Max image attachments
 const MAX_IMAGES = 5;
@@ -86,11 +88,10 @@ async function ensureJpegUri(uri: string) {
   if (looksLikeJpegOrPng && !looksLikeHeic) return uri;
 
   // Convert to JPEG (no resize, just re-encode)
-  const result = await ImageManipulator.manipulateAsync(
-    uri,
-    [],
-    { compress: 0.9, format: ImageManipulator.SaveFormat.JPEG }
-  );
+  const result = await ImageManipulator.manipulateAsync(uri, [], {
+    compress: 0.9,
+    format: ImageManipulator.SaveFormat.JPEG,
+  });
 
   return result.uri;
 }
@@ -460,13 +461,6 @@ export default function AskMomScreen() {
 
     try {
       // ✅ PASS IMAGES HERE
-      console.log("🔥 handleSend called");
-      console.log("text:", JSON.stringify(text));
-      console.log("conversationId:", conversationId);
-      console.log("composerImages (state):", composerImages.map((i) => i.uri));
-      console.log("imagesToSend (snapshot):", imagesToSend.map((i) => i.uri));
-      console.log("imagesToSend length:", imagesToSend.length);
-
       const res = await askMom(text, conversationId, imagesToSend);
 
       if (!conversationId) setConversationId(res.conversation_id);
@@ -569,8 +563,20 @@ export default function AskMomScreen() {
         />
 
         <View style={styles.headerRow}>
-          <AskMomHeader onOpenHistory={() => setDrawerOpen(true)} />
+          {/* Center: Ask Mom stays perfectly centered */}
+          <View style={styles.headerCenter}>
+            <AskMomHeader onOpenHistory={() => setDrawerOpen(true)} />
+          </View>
+
+          {/* Right: Mom’s Scam Helpline stack */}
+          <View style={styles.scamlineRight}>
+            <Ionicons name="shield-checkmark" size={18} color={BRAND.blue} />
+            <Text style={styles.scamlineText}>
+              Mom&apos;s Scam{"\n"}Helpline Since{"\n"}2013
+            </Text>
+          </View>
         </View>
+
 
         <ScrollView
           ref={scrollRef}
@@ -662,9 +668,59 @@ const styles = StyleSheet.create({
   },
 
   headerRow: {
-    flexDirection: "row",
+    position: "relative",
+    minHeight: 52,
+    justifyContent: "center",
+  },
+
+  // ✅ Keeps AskMomHeader centered no matter what’s on the right
+  headerCenter: {
+    position: "absolute",
+    left: 0,
+    right: 0,
     alignItems: "center",
-    justifyContent: "space-between",
+    justifyContent: "center",
+  },
+
+  // ✅ Right-side “Mom’s Scam / Helpline since / 2013”
+  scamlineRight: {
+    alignSelf: "center",
+    marginLeft: "auto",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 2,
+  },
+
+  scamlineText: {
+    fontSize: 11,
+    color: BRAND.muted,
+    textAlign: "center",
+    lineHeight: 13,
+  },
+
+
+  // ✅ Badge styling (matches the sign-in footer vibe, but compact for chat header)
+  momBadge: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingTop: 8,
+    paddingBottom: 10,
+    gap: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: "#EEF2F7",
+  },
+
+  momBadgeText: {
+    fontSize: 13,
+    color: BRAND.muted,
+    textAlign: "center",
+  },
+
+  momBadgeZero: {
+    fontFamily: Platform.select({
+      ios: "System",
+      android: "sans-serif",
+    }),
   },
 
   content: {

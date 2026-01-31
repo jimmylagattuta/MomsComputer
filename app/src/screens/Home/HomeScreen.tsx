@@ -279,7 +279,7 @@ function AnimatedHint() {
             numberOfLines={2}
             ellipsizeMode="tail"
           >
-            ask Mom first before you click
+            Ask Mom first before you click
           </Animated.Text>
         </View>
       </View>

@@ -22,7 +22,7 @@ const STORAGE_KEY = "momscomputer:isAuthed";
 
 // 🔧 LOCAL DEV TOGGLE
 // Flip this to true when your phone should hit your computer on the same Wi-Fi.
-const USE_LOCAL_API = true; // ⬅️ set to false to use EXPO_PUBLIC_API_BASE_URL
+const USE_LOCAL_API = false; // ⬅️ set to false to use EXPO_PUBLIC_API_BASE_URL
 
 // Your computer's LAN IP (from ipconfig) + your Rails port
 const LOCAL_API_BASE_URL = "http://192.168.12.141:3000";
