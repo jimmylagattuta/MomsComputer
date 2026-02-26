@@ -107,6 +107,16 @@ export default function SignInScreen() {
 
   const anyBusy = isSigningIn || isGoingToSignUp;
 
+  // ✅ Hidden debug opener: tap "Sign In" title 5 times to open /debug-rc
+  const debugTapCount = useRef(0);
+  const handleOpenDebugRC = () => {
+    debugTapCount.current += 1;
+    if (debugTapCount.current >= 5) {
+      debugTapCount.current = 0;
+      router.push("/debug-rc");
+    }
+  };
+
   useEffect(() => {
     const showSub = Keyboard.addListener("keyboardDidShow", () => setKeyboardOpen(true));
     const hideSub = Keyboard.addListener("keyboardDidHide", () => setKeyboardOpen(false));
@@ -362,7 +372,15 @@ export default function SignInScreen() {
           >
             <View style={styles.main}>
               <View style={styles.form}>
-                <Text style={styles.title}>Sign In</Text>
+                {/* ✅ Tap 5x to open Debug RevenueCat screen */}
+                <Pressable
+                  onPress={handleOpenDebugRC}
+                  hitSlop={12}
+                  style={({ pressed }) => (pressed ? { opacity: 0.98 } : null)}
+                >
+                  <Text style={styles.title}>Sign In</Text>
+                </Pressable>
+
                 <Text style={styles.subtitle}>Welcome back</Text>
 
                 <View style={styles.field}>

@@ -1,0 +1,75 @@
+// app.config.js
+export default {
+  expo: {
+    name: "moms-computer",
+    slug: "moms-computer",
+    version: "1.0.0",
+    orientation: "portrait",
+    icon: "./assets/images/icon-v3.png",
+    scheme: "momscomputer",
+    userInterfaceStyle: "automatic",
+    newArchEnabled: true,
+
+    ios: {
+      bundleIdentifier: "com.momscomputer.app",
+      supportsTablet: true,
+      icon: "./assets/images/icon-v3.png",
+      infoPlist: {
+        ITSAppUsesNonExemptEncryption: false,
+      },
+    },
+
+    android: {
+      package: "com.momscomputer.app",
+      adaptiveIcon: {
+        foregroundImage: "./assets/images/android-icon-foreground-v3.png",
+        backgroundColor: "#E6F4FE",
+        monochromeImage: "./assets/images/android-icon-monochrome.png",
+      },
+      edgeToEdgeEnabled: true,
+      predictiveBackGestureEnabled: false,
+      softwareKeyboardLayoutMode: "resize",
+    },
+
+    web: {
+      output: "static",
+      favicon: "./assets/images/favicon.png",
+    },
+
+    plugins: [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          image: "./assets/images/splash-icon.png",
+          imageWidth: 200,
+          resizeMode: "contain",
+          backgroundColor: "#ffffff",
+          dark: {
+            backgroundColor: "#000000",
+          },
+        },
+      ],
+      "expo-secure-store",
+      "expo-font",
+    ],
+
+    experiments: {
+      typedRoutes: true,
+      reactCompiler: true,
+    },
+
+    extra: {
+      router: {},
+      eas: {
+        projectId: "b2becdec-951d-42de-a6b8-c0d897f7375d",
+      },
+      revenuecat: {
+        iosApiKey: process.env.REVENUECAT_IOS_API_KEY,
+        androidApiKey: process.env.REVENUECAT_ANDROID_API_KEY,
+      },
+    },
+
+    owner: "jimmylagattuta",
+  },
+};

@@ -296,6 +296,22 @@ export default function HomeScreen() {
   const { width } = useWindowDimensions();
   const isNarrow = width < 380;
 
+  // ✅ Hidden debug opener: tap the logo banner 5 times to open /debug-rc
+  const debugTapCount = useRef(0);
+  const handleOpenDebugRC = () => {
+    debugTapCount.current += 1;
+    if (debugTapCount.current >= 5) {
+      debugTapCount.current = 0;
+      router.push("/debug-rc");
+    }
+  };
+
+  // ✅ NEW: Manual paywall trigger (no auto-redirect on mount)
+  const handleRunPaywall = () => {
+    if (isLoggingOut) return;
+    router.push("/paywall");
+  };
+
   const handleLogout = () => {
     if (isLoggingOut) return;
 
@@ -343,10 +359,7 @@ export default function HomeScreen() {
           style: "default",
           onPress: () => {
             Linking.openURL(`tel:${MOM_PHONE}`).catch(() => {
-              Alert.alert(
-                "Unable to place call",
-                "Your device couldn’t start a phone call."
-              );
+              Alert.alert("Unable to place call", "Your device couldn’t start a phone call.");
             });
           },
         },
@@ -366,7 +379,6 @@ export default function HomeScreen() {
   const footerTotalHeight = FOOTER_MIN_HEIGHT + footerPaddingBottom;
 
   return (
-    // ✅ Use safe-area-context SafeAreaView and DO NOT double-apply insets on iOS
     <SafeAreaView style={styles.page} edges={["top", "left", "right"]}>
       <View style={[styles.screen, { paddingTop: 8, paddingBottom: 10 }]}>
         <View style={styles.topBar}>
@@ -404,17 +416,35 @@ export default function HomeScreen() {
         <View style={[styles.main, { paddingBottom: footerTotalHeight }]}>
           <View style={[styles.row, styles.rowFullBleed]}>
             <View style={styles.bannerRow}>
-              <View style={styles.logoBanner} pointerEvents="none">
-                <Image
-                  source={{ uri: LOGO_URI }}
-                  style={styles.logo}
-                  resizeMode="cover"
-                />
-              </View>
+              <Pressable
+                onPress={handleOpenDebugRC}
+                hitSlop={12}
+                style={({ pressed }) => [
+                  styles.logoBanner,
+                  pressed ? { opacity: 0.98, transform: [{ scale: 0.999 }] } : null,
+                ]}
+              >
+                <Image source={{ uri: LOGO_URI }} style={styles.logo} resizeMode="cover" />
+              </Pressable>
             </View>
           </View>
 
           <AnimatedHint />
+
+          {/* ✅ NEW: simple debug paywall button */}
+          <View style={{ marginBottom: 10 }}>
+            <Pressable
+              onPress={handleRunPaywall}
+              disabled={isLoggingOut}
+              style={({ pressed }) => [
+                styles.debugPaywallBtn,
+                pressed && !isLoggingOut && { opacity: 0.9 },
+                isLoggingOut && { opacity: 0.6 },
+              ]}
+            >
+              <Text style={styles.debugPaywallBtnText}>Run Paywall (debug)</Text>
+            </Pressable>
+          </View>
 
           <View style={[styles.actionsWrap, { paddingTop: 4 }]}>
             <View style={styles.actions}>
@@ -428,11 +458,7 @@ export default function HomeScreen() {
                 ]}
               >
                 <View style={styles.iconPill}>
-                  <Ionicons
-                    name="chatbubble-ellipses"
-                    size={34}
-                    color={BRAND.blue}
-                  />
+                  <Ionicons name="chatbubble-ellipses" size={34} color={BRAND.blue} />
                 </View>
 
                 <View style={styles.textWrap}>
@@ -445,9 +471,7 @@ export default function HomeScreen() {
                   >
                     ASK MOM
                   </Text>
-                  <Text style={styles.btnSubText}>
-                    When something doesn’t feel right
-                  </Text>
+                  <Text style={styles.btnSubText}>When something doesn’t feel right</Text>
                 </View>
               </Pressable>
 
@@ -474,9 +498,7 @@ export default function HomeScreen() {
                   >
                     EMAIL / TEXT MOM
                   </Text>
-                  <Text style={styles.btnSubText}>
-                    For non-urgent questions
-                  </Text>
+                  <Text style={styles.btnSubText}>For non-urgent questions</Text>
                 </View>
               </Pressable>
 
@@ -503,9 +525,7 @@ export default function HomeScreen() {
                   >
                     CALL MOM
                   </Text>
-                  <Text style={styles.btnSubText}>
-                    When you need to talk to a real person
-                  </Text>
+                  <Text style={styles.btnSubText}>When you need to talk to a real person</Text>
                 </View>
               </Pressable>
             </View>
@@ -531,9 +551,7 @@ export default function HomeScreen() {
             <View style={styles.logoutModal}>
               <ActivityIndicator size="large" color={BRAND.blue} />
               <Text style={styles.logoutTitle}>Logging out…</Text>
-              <Text style={styles.logoutSub}>
-                Securing your session and signing you out.
-              </Text>
+              <Text style={styles.logoutSub}>Securing your session and signing you out.</Text>
             </View>
           </View>
         )}
@@ -675,6 +693,24 @@ const styles = StyleSheet.create({
   actionsWrap: { flex: 1, justifyContent: "flex-start" },
 
   actions: { width: "100%", gap: 12 },
+
+  debugPaywallBtn: {
+    alignSelf: "stretch",
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: BRAND.blueBorder,
+    backgroundColor: BRAND.blueSoft,
+  },
+
+  debugPaywallBtnText: {
+    color: BRAND.blue,
+    fontFamily: FONT.medium,
+    fontSize: 14,
+    letterSpacing: 0.2,
+    textAlign: "center",
+  },
 
   bigBtn: {
     width: "100%",

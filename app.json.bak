@@ -1,3 +1,4 @@
+// app.json.bak
 {
   "expo": {
     "name": "moms-computer",
@@ -62,6 +63,10 @@
       "router": {},
       "eas": {
         "projectId": "b2becdec-951d-42de-a6b8-c0d897f7375d"
+      },
+      "revenuecat": {
+        "iosApiKey": "REVENUECAT_IOS_API_KEY_PLACEHOLDER",
+        "androidApiKey": "REVENUECAT_ANDROID_API_KEY_PLACEHOLDER"
       }
     },
 

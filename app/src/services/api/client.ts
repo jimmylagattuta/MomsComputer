@@ -1,4 +1,4 @@
-// app/src/api/http.ts
+// app/src/api/client.ts
 
 // 🔧 LOCAL DEV TOGGLE
 // Flip to true when your phone should hit your computer on the same Wi-Fi.
