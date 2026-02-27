@@ -3,9 +3,18 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as SecureStore from "expo-secure-store";
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 
+type AuthedUser = {
+  id?: string | number;
+  email?: string;
+  [key: string]: any;
+};
+
 type AuthContextValue = {
   isAuthed: boolean;
   isBooting: boolean;
+
+  // ✅ The signed-in user (pulled from SecureStore auth_user)
+  user: AuthedUser | null;
 
   // ✅ Real auth flag setter (called after backend login succeeds)
   signIn: () => Promise<void>;
@@ -39,9 +48,22 @@ if (__DEV__ === false && USE_LOCAL_API) {
 
 console.log("API BASE URL (AuthProvider)", API_BASE_URL);
 
+async function readStoredUser(): Promise<AuthedUser | null> {
+  try {
+    const raw = await SecureStore.getItemAsync("auth_user");
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    return parsed as AuthedUser;
+  } catch {
+    return null;
+  }
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isAuthed, setIsAuthed] = useState(false);
   const [isBooting, setIsBooting] = useState(true);
+  const [user, setUser] = useState<AuthedUser | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -51,6 +73,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         if (raw === "1") {
           setIsAuthed(true);
+          const u = await readStoredUser();
+          setUser(u);
           return;
         }
 
@@ -60,31 +84,40 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           console.log("JWT TOKEN:", token);
           await AsyncStorage.setItem(STORAGE_KEY, "1");
           setIsAuthed(true);
+
+          const u = await readStoredUser();
+          setUser(u);
           return;
         }
 
         setIsAuthed(false);
+        setUser(null);
       } finally {
         setIsBooting(false);
       }
     })();
   }, []);
 
-  // ✅ Call this after your backend login succeeds
+  // ✅ Call this after your backend login succeeds (token + auth_user already saved)
   const signIn = async () => {
     await AsyncStorage.setItem(STORAGE_KEY, "1");
     setIsAuthed(true);
+
+    // pull the stored user into context
+    const u = await readStoredUser();
+    setUser(u);
   };
 
   // ✅ Keep for Milestone 1 / testing
   const signInMock = async (_email: string, _password: string) => {
     await AsyncStorage.setItem(STORAGE_KEY, "1");
     setIsAuthed(true);
+
+    // mock has no real user; keep null
+    setUser(null);
   };
 
   const signOut = async () => {
-    // Add any “per-user app cache” keys here as you create them.
-    // (Safe to include keys even if they don’t exist yet.)
     const APP_CACHE_KEYS = [
       STORAGE_KEY,
       "momscomputer:conversation_id",
@@ -97,7 +130,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await AsyncStorage.multiRemove(APP_CACHE_KEYS);
 
       // 2) SecureStore: remove auth secrets
-      // (Wrap individually so one failure doesn't block logout)
       try {
         await SecureStore.deleteItemAsync("auth_token");
       } catch {}
@@ -107,12 +139,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } finally {
       // 3) Always flip state even if storage operations throw
       setIsAuthed(false);
+      setUser(null);
     }
   };
 
   const value = useMemo(
-    () => ({ isAuthed, isBooting, signIn, signInMock, signOut }),
-    [isAuthed, isBooting]
+    () => ({ isAuthed, isBooting, user, signIn, signInMock, signOut }),
+    [isAuthed, isBooting, user]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

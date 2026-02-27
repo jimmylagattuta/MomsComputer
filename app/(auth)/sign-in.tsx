@@ -22,6 +22,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../src/auth/AuthProvider";
 import { postJson } from "../src/services/api/client";
+import { rcIdentifyUser, rcLogoutUser } from "../src/subscriptions/rcClient";
 import { FONT } from "../src/theme";
 
 const BRAND = {
@@ -273,14 +274,14 @@ export default function SignInScreen() {
       return;
     }
 
+    hardStopAllAnims();
+    signUpFillAnim.setValue(0);
+    signUpIconAnim.setValue(0);
+
+    setIsSigningIn(true);
+
     try {
-      hardStopAllAnims();
-      signUpFillAnim.setValue(0);
-      signUpIconAnim.setValue(0);
-
-      setIsSigningIn(true);
       await sleep(60);
-
       await runSignInAnim();
 
       const { ok, status, json } = await postJson("/v1/auth/login", {
@@ -288,41 +289,63 @@ export default function SignInScreen() {
       });
 
       if (!ok) {
+        // ✅ detach RevenueCat user if a previous session was cached on device
+        try {
+          await rcLogoutUser();
+        } catch { }
+
         await SecureStore.deleteItemAsync("auth_token");
         await SecureStore.deleteItemAsync("auth_user");
-        await resetSignInAnim();
-        setIsSigningIn(false);
 
         Alert.alert("Can’t sign in", pickFriendlyAuthError(status, json));
         return;
       }
 
       const token = String(json?.token || "");
+      const u = (json?.user || {}) as any;
+
       if (!token) {
-        await resetSignInAnim();
-        setIsSigningIn(false);
         Alert.alert("Can’t sign in", "We couldn’t sign you in. Please try again.");
         return;
       }
 
-      console.log("LOGIN JWT TOKEN:", token);
-
       await SecureStore.setItemAsync("auth_token", token);
-      await SecureStore.setItemAsync("auth_user", JSON.stringify(json?.user || {}));
+      await SecureStore.setItemAsync("auth_user", JSON.stringify(u));
 
-      await sleep(200);
+      // ✅ CRITICAL: identify BEFORE routing away / before Android auto-paywall can trigger
+      if (u?.id != null) {
+        await rcIdentifyUser(String(u.id));
+
+        // ✅ Immediately pull CustomerInfo once to “lock in” entitlements for this user
+        try {
+          const { getCustomerInfo } = await import("../src/subscriptions/rcClient");
+          const info = await getCustomerInfo();
+          console.log(
+            "RC after identify:",
+            info?.originalAppUserId,
+            Object.keys(info?.entitlements?.active ?? {})
+          );
+        } catch (e) {
+          console.log("RC after identify: failed", e);
+        }
+      }
 
       await signIn();
       setPassword("");
       router.replace("/(app)");
-    } catch {
-      await resetSignInAnim();
-      setIsSigningIn(false);
-
+    } catch (e) {
       Alert.alert(
         "Can’t connect",
         "We couldn’t reach the server right now. Please check your connection and try again."
       );
+    } finally {
+      // ✅ Always stop spinner. (If we routed away, this screen unmounts anyway.)
+      setIsSigningIn(false);
+
+      // ✅ Reset the sign-in animation if we’re still here
+      try {
+        await resetSignInAnim();
+      } catch { }
     }
   };
 

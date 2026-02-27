@@ -1,7 +1,7 @@
 // app/src/subscriptions/useSubscription.ts
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Purchases, { CustomerInfo } from "react-native-purchases";
-import { configureRevenueCat, getCustomerInfo, isProActive } from "./rcClient";
+import { getCustomerInfo, isProActive } from "./rcClient";
 
 export function useSubscription() {
   const [customerInfo, setCustomerInfo] = useState<CustomerInfo | null>(null);
@@ -10,13 +10,11 @@ export function useSubscription() {
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const configured = await configureRevenueCat();
-      if (!configured) {
-        setCustomerInfo(null);
-        return;
-      }
+      // getCustomerInfo() already calls configureRevenueCat() internally
       const info = await getCustomerInfo();
       setCustomerInfo(info);
+    } catch {
+      setCustomerInfo(null);
     } finally {
       setLoading(false);
     }
@@ -27,20 +25,18 @@ export function useSubscription() {
 
     (async () => {
       try {
-        const configured = await configureRevenueCat();
-        if (!configured) {
-          if (mounted) setCustomerInfo(null);
-          return;
-        }
         const info = await getCustomerInfo();
         if (mounted) setCustomerInfo(info);
+      } catch {
+        if (mounted) setCustomerInfo(null);
       } finally {
         if (mounted) setLoading(false);
       }
     })();
 
-    // Some versions return void, others return a subscription-like object.
+    // Some SDK versions return void, others return a subscription-like object.
     const sub: any = Purchases.addCustomerInfoUpdateListener((info) => {
+      if (!mounted) return;
       setCustomerInfo(info);
     });
 

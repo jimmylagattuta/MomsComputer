@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import * as SecureStore from "expo-secure-store";
-import React, { useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -20,6 +20,15 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { FONT } from "../../../src/theme";
 import { useAuth } from "../../auth/AuthProvider";
 import { postJson } from "../../services/api/client";
+import { rcIdentifyUser, rcLogoutUser } from "../../subscriptions/rcClient";
+import { useSubscription } from "../../subscriptions/useSubscription";
+
+/**
+ * ✅ DEV TOGGLE
+ * Turn this OFF while you build other features so subscription code never runs.
+ * Turn ON when you want to test RevenueCat + paywall.
+ */
+const SUBSCRIPTIONS_ENABLED = true;
 
 const BRAND = {
   pageBg: "#0B1220",
@@ -245,10 +254,7 @@ function AnimatedHint() {
         />
 
         <Animated.View
-          style={[
-            styles.hintIcon,
-            { transform: [{ scale: iconScale }, { rotate: rotateDeg }] },
-          ]}
+          style={[styles.hintIcon, { transform: [{ scale: iconScale }, { rotate: rotateDeg }] }]}
         >
           <Ionicons name="sparkles" size={14} color={BRAND.blue} />
         </Animated.View>
@@ -289,12 +295,56 @@ function AnimatedHint() {
 
 export default function HomeScreen() {
   const router = useRouter();
-  const { signOut } = useAuth();
+
+  // If AuthProvider exposes user, we'll use it. If not, this stays undefined and everything still works safely.
+  const auth = useAuth() as any;
+  const signOut = auth?.signOut as (() => Promise<void>) | undefined;
+  const user = auth?.user as { id?: string | number } | undefined;
+
   const insets = useSafeAreaInsets();
   const [isLoggingOut, setIsLoggingOut] = useState(false);
 
   const { width } = useWindowDimensions();
   const isNarrow = width < 380;
+
+  // ✅ Subscription status (SAFE: if disabled, we never call the hook)
+  const sub = SUBSCRIPTIONS_ENABLED ? useSubscription() : null;
+  const isPro = sub?.isPro ?? false;
+  const subLoading = sub?.loading ?? false;
+
+  // ✅ Prevent multiple auto-navigations to paywall on Android
+  const autoPaywallOpenedRef = useRef(false);
+
+  // ✅ "Welcome to Pro" message guard (avoid re-alerts)
+  const proWelcomeShownRef = useRef(false);
+
+  // ✅ Gate Android auto-paywall until RC identity is definitely set + entitlements read once
+  const [rcReady, setRcReady] = useState(false);
+
+  // ✅ Identify signed-in user to RevenueCat once we have the app user id
+  // and immediately refresh entitlements once (rock-solid)
+  useEffect(() => {
+    if (!SUBSCRIPTIONS_ENABLED) return;
+    if (!user?.id) return;
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        setRcReady(false);
+        await rcIdentifyUser(String(user.id));
+        await sub?.refresh?.();
+        if (!cancelled) setRcReady(true);
+      } catch {
+        if (!cancelled) setRcReady(true); // fail-open so app still works
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]); // keep dependency focused; sub is stable enough and optional
 
   // ✅ Hidden debug opener: tap the logo banner 5 times to open /debug-rc
   const debugTapCount = useRef(0);
@@ -306,66 +356,130 @@ export default function HomeScreen() {
     }
   };
 
-  // ✅ NEW: Manual paywall trigger (no auto-redirect on mount)
+  // ✅ Manual paywall trigger (iOS button only)
   const handleRunPaywall = () => {
     if (isLoggingOut) return;
     router.push("/paywall");
   };
 
+  // ✅ OPTIONAL/SMART: re-arm Android auto-paywall when user becomes Pro
+  // If they later lose Pro (expire/cancel), Android can auto-open again.
+  useEffect(() => {
+    if (!SUBSCRIPTIONS_ENABLED) return;
+    if (isPro) {
+      autoPaywallOpenedRef.current = false;
+    }
+  }, [isPro]);
+
+  // ✅ Nice message when Pro becomes active (after a successful subscribe)
+  useEffect(() => {
+    if (!SUBSCRIPTIONS_ENABLED) return;
+    if (subLoading) return;
+
+    if (isPro) {
+      if (!proWelcomeShownRef.current) {
+        proWelcomeShownRef.current = true;
+
+        const tryGoBack = () => {
+          try {
+            // @ts-ignore
+            if (router?.canGoBack?.()) {
+              // @ts-ignore
+              router.back();
+            }
+          } catch {}
+        };
+
+        setTimeout(() => {
+          tryGoBack();
+          setTimeout(() => {
+            Alert.alert(
+              "✅ Subscription active!",
+              "You may now use the premium features. Thanks for supporting Mom’s Computer."
+            );
+          }, 250);
+        }, 150);
+      }
+    } else {
+      proWelcomeShownRef.current = false;
+    }
+  }, [isPro, subLoading, router]);
+
+  // ✅ Android auto-paywall: if not subscribed, open paywall automatically
+  useEffect(() => {
+    if (!SUBSCRIPTIONS_ENABLED) return;
+
+    if (Platform.OS !== "android") return;
+    if (!rcReady) return; // ✅ NEW: wait until identify + refresh ran once
+    if (subLoading) return;
+    if (isLoggingOut) return;
+    if (isPro) return;
+
+    if (autoPaywallOpenedRef.current) return;
+    autoPaywallOpenedRef.current = true;
+
+    const t = setTimeout(() => {
+      router.push("/paywall");
+    }, 250);
+
+    return () => clearTimeout(t);
+  }, [rcReady, isPro, subLoading, isLoggingOut, router]);
+
   const handleLogout = () => {
     if (isLoggingOut) return;
 
-    Alert.alert(
-      "Log out?",
-      "You’ll need to sign in again to use Ask Mom.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Log out",
-          style: "destructive",
-          onPress: async () => {
-            setIsLoggingOut(true);
-            try {
-              const token = await SecureStore.getItemAsync("auth_token");
+    Alert.alert("Log out?", "You’ll need to sign in again to use Ask Mom.", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Log out",
+        style: "destructive",
+        onPress: async () => {
+          setIsLoggingOut(true);
+          try {
+            const token = await SecureStore.getItemAsync("auth_token");
 
-              if (token) {
-                try {
-                  await postJson("/v1/auth/logout", {}, token);
-                } catch {}
-              }
-
-              await signOut();
-              router.replace("/(auth)/sign-in");
-            } finally {
-              setIsLoggingOut(false);
+            if (token) {
+              try {
+                await postJson("/v1/auth/logout", {}, token);
+              } catch {}
             }
-          },
+
+            // ✅ detach RevenueCat user so next sign-in doesn't stay aliased
+            if (SUBSCRIPTIONS_ENABLED) {
+              await rcLogoutUser();
+            }
+
+            if (signOut) {
+              await signOut();
+            }
+
+            router.replace("/(auth)/sign-in");
+          } finally {
+            setIsLoggingOut(false);
+            autoPaywallOpenedRef.current = false;
+            proWelcomeShownRef.current = false;
+            setRcReady(false);
+          }
         },
-      ],
-      { cancelable: true }
-    );
+      },
+    ]);
   };
 
   const MOM_PHONE = "+15625551234"; // TODO: replace with real number
 
   const handleCallMom = () => {
-    Alert.alert(
-      "Call Mom?",
-      "This will place a phone call using your device.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Call",
-          style: "default",
-          onPress: () => {
-            Linking.openURL(`tel:${MOM_PHONE}`).catch(() => {
-              Alert.alert("Unable to place call", "Your device couldn’t start a phone call.");
-            });
-          },
+    Alert.alert("Call Mom?", "This will place a phone call using your device.", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Call",
+        style: "default",
+        onPress: () => {
+          Linking.openURL(`tel:${MOM_PHONE}`).catch(() => {
+            Alert.alert("Unable to place call", "Your device couldn’t start a phone call.");
+          });
         },
-      ],
-      { cancelable: true }
-    );
+      },
+    ]);
   };
 
   const bigBtnTextStyle = useMemo(
@@ -377,6 +491,9 @@ export default function HomeScreen() {
   const FOOTER_MIN_HEIGHT = 56;
   const footerPaddingBottom = Math.max(insets.bottom, 10) + 10;
   const footerTotalHeight = FOOTER_MIN_HEIGHT + footerPaddingBottom;
+
+  // ✅ Show the "Run Paywall" button ONLY on iOS (and only if subs enabled)
+  const showIOSPaywallButton = SUBSCRIPTIONS_ENABLED && Platform.OS === "ios";
 
   return (
     <SafeAreaView style={styles.page} edges={["top", "left", "right"]}>
@@ -431,20 +548,22 @@ export default function HomeScreen() {
 
           <AnimatedHint />
 
-          {/* ✅ NEW: simple debug paywall button */}
-          <View style={{ marginBottom: 10 }}>
-            <Pressable
-              onPress={handleRunPaywall}
-              disabled={isLoggingOut}
-              style={({ pressed }) => [
-                styles.debugPaywallBtn,
-                pressed && !isLoggingOut && { opacity: 0.9 },
-                isLoggingOut && { opacity: 0.6 },
-              ]}
-            >
-              <Text style={styles.debugPaywallBtnText}>Run Paywall (debug)</Text>
-            </Pressable>
-          </View>
+          {/* ✅ iOS: show manual paywall button. Android: hidden (auto-paywall handles it) */}
+          {showIOSPaywallButton && (
+            <View style={{ marginBottom: 10 }}>
+              <Pressable
+                onPress={handleRunPaywall}
+                disabled={isLoggingOut}
+                style={({ pressed }) => [
+                  styles.debugPaywallBtn,
+                  pressed && !isLoggingOut && { opacity: 0.9 },
+                  isLoggingOut && { opacity: 0.6 },
+                ]}
+              >
+                <Text style={styles.debugPaywallBtnText}>Run Paywall (debug)</Text>
+              </Pressable>
+            </View>
+          )}
 
           <View style={[styles.actionsWrap, { paddingTop: 4 }]}>
             <View style={styles.actions}>
@@ -530,6 +649,24 @@ export default function HomeScreen() {
               </Pressable>
             </View>
           </View>
+
+          {/* Optional tiny status line while we auto-check sub on Android */}
+          {SUBSCRIPTIONS_ENABLED && Platform.OS === "android" && (subLoading || !rcReady) && (
+            <View style={{ marginTop: 10 }}>
+              <Text style={{ color: BRAND.muted, fontFamily: FONT.regular, fontSize: 12 }}>
+                Checking subscription…
+              </Text>
+            </View>
+          )}
+
+          {/* Optional: tiny dev note so you remember it's off */}
+          {!SUBSCRIPTIONS_ENABLED && (
+            <View style={{ marginTop: 10 }}>
+              <Text style={{ color: BRAND.muted, fontFamily: FONT.regular, fontSize: 12 }}>
+                Subscriptions disabled (dev toggle).
+              </Text>
+            </View>
+          )}
         </View>
 
         <View
