@@ -1,29 +1,68 @@
 // app/src/subscriptions/rcClient.ts
 
+import * as SecureStore from "expo-secure-store";
 import Purchases, { CustomerInfo, LOG_LEVEL } from "react-native-purchases";
 import { ENTITLEMENT_ID } from "./constants";
 import { getRevenueCatApiKey } from "./rcKeys";
 
 let configured = false;
+let configuredAppUserId: string | null = null;
+
+/* ======================================================
+   AUTH / USER HELPERS
+   ====================================================== */
+
+async function getStoredAuthUserId(): Promise<string | null> {
+  try {
+    const raw = await SecureStore.getItemAsync("auth_user");
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw);
+    const id = parsed?.id;
+
+    if (id == null) return null;
+    return String(id);
+  } catch (e) {
+    console.log("RC getStoredAuthUserId failed:", e);
+    return null;
+  }
+}
 
 /* ======================================================
    CONFIGURATION
    ====================================================== */
 
 export async function configureRevenueCat(): Promise<boolean> {
-  if (configured) return true;
-
   const apiKey = getRevenueCatApiKey();
   if (!apiKey) {
     console.log("RC configure skipped: missing API key");
     return false;
   }
 
+  const appUserID = await getStoredAuthUserId();
+  if (!appUserID) {
+    console.log("RC configure skipped: no real app user id available yet");
+    return false;
+  }
+
+  if (configured && configuredAppUserId === appUserID) {
+    return true;
+  }
+
   try {
     Purchases.setLogLevel(LOG_LEVEL.VERBOSE);
-    Purchases.configure({ apiKey });
+
+    // IMPORTANT:
+    // Configure with a real app user id so RevenueCat never creates $RCAnonymousID.
+    Purchases.configure({
+      apiKey,
+      appUserID,
+    });
+
     configured = true;
-    console.log("RC configured");
+    configuredAppUserId = appUserID;
+
+    console.log("RC configured with appUserID:", appUserID);
     return true;
   } catch (e) {
     console.log("RC configure failed:", e);
@@ -43,7 +82,7 @@ export function isProActive(customerInfo: CustomerInfo | null): boolean {
 export async function getCustomerInfo(): Promise<CustomerInfo> {
   const ok = await configureRevenueCat();
   if (!ok) {
-    throw new Error("RevenueCat not configured");
+    throw new Error("RevenueCat not configured with a real app user id");
   }
 
   const info = await Purchases.getCustomerInfo();
@@ -61,7 +100,6 @@ export async function getCustomerInfo(): Promise<CustomerInfo> {
    IDENTITY HELPERS
    ====================================================== */
 
-// Safe helper to read current App User ID (sync or async compatible)
 export async function getCurrentAppUserId(): Promise<string | null> {
   try {
     const maybe = (Purchases as any).getAppUserID?.();
@@ -72,7 +110,6 @@ export async function getCurrentAppUserId(): Promise<string | null> {
   }
 }
 
-// Safe helper to check anonymous state
 export async function isAnonymousUser(): Promise<boolean | null> {
   try {
     const fn = (Purchases as any).isAnonymous;
@@ -87,8 +124,8 @@ export async function isAnonymousUser(): Promise<boolean | null> {
 }
 
 /**
- * Identify logged-in backend user with RevenueCat.
- * This switches off $RCAnonymousID.
+ * Keep RevenueCat tied to your real backend/app user.
+ * No anonymous fallback.
  */
 export async function rcIdentifyUser(
   appUserId: string
@@ -108,8 +145,9 @@ export async function rcIdentifyUser(
     }
 
     const result: any = await (Purchases as any).logIn(next);
-
     const info: CustomerInfo | null = result?.customerInfo ?? null;
+
+    configuredAppUserId = next;
 
     console.log(
       "RC logIn success ->",
@@ -125,25 +163,14 @@ export async function rcIdentifyUser(
 }
 
 /**
- * Logout from RevenueCat.
- * This creates a new anonymous ID.
+ * Since you do NOT want anonymous users,
+ * do not call RevenueCat logOut().
+ *
+ * App sign-out should clear your own auth,
+ * then you can stop showing subscription UI until a real user signs back in.
  */
-export async function rcLogoutUser(): Promise<CustomerInfo | null> {
-  try {
-    const ok = await configureRevenueCat();
-    if (!ok) return null;
-
-    const info: any = await (Purchases as any).logOut?.();
-
-    const customerInfo: CustomerInfo | null = info ?? null;
-
-    console.log("RC logOut ->", customerInfo?.originalAppUserId);
-
-    return customerInfo;
-  } catch (e) {
-    console.log("rcLogoutUser failed:", e);
-    return null;
-  }
+export async function rcLogoutUser(): Promise<void> {
+  console.log("RC logout skipped intentionally: anonymous users are disabled");
 }
 
 /* ======================================================
@@ -153,7 +180,7 @@ export async function rcLogoutUser(): Promise<CustomerInfo | null> {
 export async function restorePurchases(): Promise<CustomerInfo> {
   const ok = await configureRevenueCat();
   if (!ok) {
-    throw new Error("RevenueCat not configured");
+    throw new Error("RevenueCat not configured with a real app user id");
   }
 
   const info = await Purchases.restorePurchases();

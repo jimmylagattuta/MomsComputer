@@ -8,7 +8,6 @@ import {
   Animated,
   Easing,
   Image,
-  Linking,
   Platform,
   Pressable,
   StyleSheet,
@@ -24,11 +23,14 @@ import { rcIdentifyUser, rcLogoutUser } from "../../subscriptions/rcClient";
 import { useSubscription } from "../../subscriptions/useSubscription";
 
 /**
- * ✅ DEV TOGGLE
- * Turn this OFF while you build other features so subscription code never runs.
- * Turn ON when you want to test RevenueCat + paywall.
+ * ✅ DEV TOGGLES
+ * Turn SUBSCRIPTIONS_ENABLED ON when testing RevenueCat behavior.
+ * Turn DEBUG_PAYWALL_BUTTON_ENABLED OFF when you want the debug button hidden.
  */
-const SUBSCRIPTIONS_ENABLED = true;
+const SUBSCRIPTIONS_ENABLED = false;
+const DEBUG_PAYWALL_BUTTON_ENABLED = true;
+
+const IS_ANDROID = Platform.OS === "android";
 
 const BRAND = {
   pageBg: "#0B1220",
@@ -44,21 +46,42 @@ const BRAND = {
 const LOGO_URI =
   "https://res.cloudinary.com/djtsuktwb/image/upload/v1769703507/ChatGPT_Image_Jan_29_2026_08_00_07_AM_1_3_gtqeo8.jpg";
 
+/**
+ * ✅ Persisted Pro state so "Subscription active" only fires once per upgrade
+ */
+const PRO_STATE_KEY = (userId: string) => `rc_pro_state_v1:${userId}`;
+
+// Store "1" for pro, "0" for not pro
+async function readStoredPro(userId: string): Promise<boolean | null> {
+  try {
+    const v = await SecureStore.getItemAsync(PRO_STATE_KEY(userId));
+    if (v === "1") return true;
+    if (v === "0") return false;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+async function writeStoredPro(userId: string, isPro: boolean): Promise<void> {
+  try {
+    await SecureStore.setItemAsync(PRO_STATE_KEY(userId), isPro ? "1" : "0");
+  } catch {
+    // ignore
+  }
+}
+
 function AnimatedHint() {
-  // Sheen sweep
   const sheenX = useRef(new Animated.Value(-140)).current;
   const sheenOpacity = useRef(new Animated.Value(0)).current;
 
-  // Icon pop + wiggle
   const iconScale = useRef(new Animated.Value(0.92)).current;
   const iconRotate = useRef(new Animated.Value(0)).current;
 
-  // Line 1
   const l1Opacity = useRef(new Animated.Value(0)).current;
   const l1Y = useRef(new Animated.Value(10)).current;
   const l1Scale = useRef(new Animated.Value(0.985)).current;
 
-  // Line 2
   const l2Opacity = useRef(new Animated.Value(0)).current;
   const l2Y = useRef(new Animated.Value(10)).current;
   const l2Scale = useRef(new Animated.Value(0.985)).current;
@@ -96,7 +119,6 @@ function AnimatedHint() {
 
       const seq = Animated.sequence([
         Animated.parallel([
-          // Sheen sweep
           Animated.sequence([
             Animated.timing(sheenOpacity, {
               toValue: 1,
@@ -118,7 +140,6 @@ function AnimatedHint() {
             }),
           ]),
 
-          // Icon pop + tiny wiggle
           Animated.sequence([
             Animated.delay(80),
             Animated.spring(iconScale, {
@@ -149,7 +170,6 @@ function AnimatedHint() {
             ]),
           ]),
 
-          // Line 1
           Animated.sequence([
             Animated.delay(260),
             Animated.parallel([
@@ -174,7 +194,6 @@ function AnimatedHint() {
             ]),
           ]),
 
-          // Line 2
           Animated.sequence([
             Animated.delay(820),
             Animated.parallel([
@@ -232,7 +251,7 @@ function AnimatedHint() {
       l2Y.stopAnimation();
       l2Scale.stopAnimation();
     };
-  }, []);
+  }, [iconRotate, iconScale, l1Opacity, l1Scale, l1Y, l2Opacity, l2Scale, l2Y, sheenOpacity, sheenX]);
 
   const rotateDeg = iconRotate.interpolate({
     inputRange: [-1, 0, 1],
@@ -253,9 +272,7 @@ function AnimatedHint() {
           ]}
         />
 
-        <Animated.View
-          style={[styles.hintIcon, { transform: [{ scale: iconScale }, { rotate: rotateDeg }] }]}
-        >
+        <Animated.View style={[styles.hintIcon, { transform: [{ scale: iconScale }, { rotate: rotateDeg }] }]}>
           <Ionicons name="sparkles" size={14} color={BRAND.blue} />
         </Animated.View>
 
@@ -296,7 +313,6 @@ function AnimatedHint() {
 export default function HomeScreen() {
   const router = useRouter();
 
-  // If AuthProvider exposes user, we'll use it. If not, this stays undefined and everything still works safely.
   const auth = useAuth() as any;
   const signOut = auth?.signOut as (() => Promise<void>) | undefined;
   const user = auth?.user as { id?: string | number } | undefined;
@@ -307,36 +323,35 @@ export default function HomeScreen() {
   const { width } = useWindowDimensions();
   const isNarrow = width < 380;
 
-  // ✅ Subscription status (SAFE: if disabled, we never call the hook)
   const sub = SUBSCRIPTIONS_ENABLED ? useSubscription() : null;
   const isPro = sub?.isPro ?? false;
   const subLoading = sub?.loading ?? false;
 
-  // ✅ Prevent multiple auto-navigations to paywall on Android
   const autoPaywallOpenedRef = useRef(false);
-
-  // ✅ "Welcome to Pro" message guard (avoid re-alerts)
-  const proWelcomeShownRef = useRef(false);
-
-  // ✅ Gate Android auto-paywall until RC identity is definitely set + entitlements read once
   const [rcReady, setRcReady] = useState(false);
 
-  // ✅ Identify signed-in user to RevenueCat once we have the app user id
-  // and immediately refresh entitlements once (rock-solid)
+  const [storedPro, setStoredPro] = useState<boolean | null>(null);
+  const storedProLoadedRef = useRef(false);
+
   useEffect(() => {
     if (!SUBSCRIPTIONS_ENABLED) return;
-    if (!user?.id) return;
 
     let cancelled = false;
 
     (async () => {
       try {
         setRcReady(false);
+
+        if (!user?.id) {
+          if (!cancelled) setRcReady(true);
+          return;
+        }
+
         await rcIdentifyUser(String(user.id));
         await sub?.refresh?.();
         if (!cancelled) setRcReady(true);
       } catch {
-        if (!cancelled) setRcReady(true); // fail-open so app still works
+        if (!cancelled) setRcReady(true);
       }
     })();
 
@@ -344,26 +359,30 @@ export default function HomeScreen() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id]); // keep dependency focused; sub is stable enough and optional
+  }, [user?.id]);
 
-  // ✅ Hidden debug opener: tap the logo banner 5 times to open /debug-rc
-  const debugTapCount = useRef(0);
-  const handleOpenDebugRC = () => {
-    debugTapCount.current += 1;
-    if (debugTapCount.current >= 5) {
-      debugTapCount.current = 0;
-      router.push("/debug-rc");
-    }
-  };
+  useEffect(() => {
+    if (!SUBSCRIPTIONS_ENABLED) return;
+    if (!user?.id) return;
 
-  // ✅ Manual paywall trigger (iOS button only)
-  const handleRunPaywall = () => {
-    if (isLoggingOut) return;
-    router.push("/paywall");
-  };
+    let cancelled = false;
 
-  // ✅ OPTIONAL/SMART: re-arm Android auto-paywall when user becomes Pro
-  // If they later lose Pro (expire/cancel), Android can auto-open again.
+    (async () => {
+      storedProLoadedRef.current = false;
+      setStoredPro(null);
+
+      const v = await readStoredPro(String(user.id));
+      if (!cancelled) {
+        setStoredPro(v);
+        storedProLoadedRef.current = true;
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
+
   useEffect(() => {
     if (!SUBSCRIPTIONS_ENABLED) return;
     if (isPro) {
@@ -371,46 +390,46 @@ export default function HomeScreen() {
     }
   }, [isPro]);
 
-  // ✅ Nice message when Pro becomes active (after a successful subscribe)
   useEffect(() => {
     if (!SUBSCRIPTIONS_ENABLED) return;
+    if (!user?.id) return;
+    if (!rcReady) return;
     if (subLoading) return;
+    if (!storedProLoadedRef.current) return;
 
-    if (isPro) {
-      if (!proWelcomeShownRef.current) {
-        proWelcomeShownRef.current = true;
+    const userId = String(user.id);
 
-        const tryGoBack = () => {
-          try {
-            // @ts-ignore
-            if (router?.canGoBack?.()) {
-              // @ts-ignore
-              router.back();
-            }
-          } catch {}
-        };
-
-        setTimeout(() => {
-          tryGoBack();
-          setTimeout(() => {
-            Alert.alert(
-              "✅ Subscription active!",
-              "You may now use the premium features. Thanks for supporting Mom’s Computer."
-            );
-          }, 250);
-        }, 150);
-      }
-    } else {
-      proWelcomeShownRef.current = false;
+    if (storedPro === null) {
+      writeStoredPro(userId, isPro);
+      setStoredPro(isPro);
+      return;
     }
-  }, [isPro, subLoading, router]);
 
-  // ✅ Android auto-paywall: if not subscribed, open paywall automatically
+    if (!storedPro && isPro) {
+      try {
+        // @ts-ignore
+        if (router?.canGoBack?.()) {
+          // @ts-ignore
+          router.back();
+        }
+      } catch {}
+
+      Alert.alert("✅ Subscription active!");
+
+      writeStoredPro(userId, true);
+      setStoredPro(true);
+      return;
+    }
+
+    if (storedPro !== isPro) {
+      writeStoredPro(userId, isPro);
+      setStoredPro(isPro);
+    }
+  }, [user?.id, rcReady, subLoading, isPro, storedPro, router]);
+
   useEffect(() => {
     if (!SUBSCRIPTIONS_ENABLED) return;
-
-    if (Platform.OS !== "android") return;
-    if (!rcReady) return; // ✅ NEW: wait until identify + refresh ran once
+    if (!rcReady) return;
     if (subLoading) return;
     if (isLoggingOut) return;
     if (isPro) return;
@@ -420,10 +439,20 @@ export default function HomeScreen() {
 
     const t = setTimeout(() => {
       router.push("/paywall");
-    }, 250);
+    }, Platform.OS === "ios" ? 350 : 250);
 
     return () => clearTimeout(t);
   }, [rcReady, isPro, subLoading, isLoggingOut, router]);
+
+  const handleOpenDebugPaywall = () => {
+    if (!DEBUG_PAYWALL_BUTTON_ENABLED) return;
+    if (isLoggingOut) return;
+
+    router.push({
+      pathname: "/paywall",
+      params: { debug: "1" },
+    });
+  };
 
   const handleLogout = () => {
     if (isLoggingOut) return;
@@ -444,7 +473,6 @@ export default function HomeScreen() {
               } catch {}
             }
 
-            // ✅ detach RevenueCat user so next sign-in doesn't stay aliased
             if (SUBSCRIPTIONS_ENABLED) {
               await rcLogoutUser();
             }
@@ -457,29 +485,17 @@ export default function HomeScreen() {
           } finally {
             setIsLoggingOut(false);
             autoPaywallOpenedRef.current = false;
-            proWelcomeShownRef.current = false;
             setRcReady(false);
+            setStoredPro(null);
+            storedProLoadedRef.current = false;
           }
         },
       },
     ]);
   };
 
-  const MOM_PHONE = "+15625551234"; // TODO: replace with real number
-
   const handleCallMom = () => {
-    Alert.alert("Call Mom?", "This will place a phone call using your device.", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Call",
-        style: "default",
-        onPress: () => {
-          Linking.openURL(`tel:${MOM_PHONE}`).catch(() => {
-            Alert.alert("Unable to place call", "Your device couldn’t start a phone call.");
-          });
-        },
-      },
-    ]);
+    router.push("/(app)/call-mom");
   };
 
   const bigBtnTextStyle = useMemo(
@@ -487,19 +503,34 @@ export default function HomeScreen() {
     [isNarrow]
   );
 
-  // Footer sizing
-  const FOOTER_MIN_HEIGHT = 56;
+  const FOOTER_MIN_HEIGHT = 64;
   const footerPaddingBottom = Math.max(insets.bottom, 10) + 10;
   const footerTotalHeight = FOOTER_MIN_HEIGHT + footerPaddingBottom;
-
-  // ✅ Show the "Run Paywall" button ONLY on iOS (and only if subs enabled)
-  const showIOSPaywallButton = SUBSCRIPTIONS_ENABLED && Platform.OS === "ios";
 
   return (
     <SafeAreaView style={styles.page} edges={["top", "left", "right"]}>
       <View style={[styles.screen, { paddingTop: 8, paddingBottom: 10 }]}>
         <View style={styles.topBar}>
+          {DEBUG_PAYWALL_BUTTON_ENABLED ? (
+            <Pressable
+              onPress={handleOpenDebugPaywall}
+              disabled={isLoggingOut}
+              hitSlop={12}
+              style={({ pressed }) => [
+                styles.debugChip,
+                pressed && !isLoggingOut && styles.debugChipPressed,
+                isLoggingOut && { opacity: 0.6 },
+              ]}
+            >
+              <Ionicons name="bug" size={18} color={BRAND.blue} />
+              <Text style={styles.debugChipText}>Debug</Text>
+            </Pressable>
+          ) : (
+            <View />
+          )}
+
           <View style={{ flex: 1 }} />
+
           <Pressable
             onPress={handleLogout}
             disabled={isLoggingOut}
@@ -517,53 +548,23 @@ export default function HomeScreen() {
               </>
             ) : (
               <>
-                <Ionicons
-                  name="walk"
-                  size={22}
-                  color={BRAND.blue}
-                  style={{ transform: [{ scaleX: -1 }] }}
-                />
+                <Ionicons name="walk" size={22} color={BRAND.blue} style={{ transform: [{ scaleX: -1 }] }} />
                 <Text style={styles.logoutChipText}>Logout</Text>
               </>
             )}
           </Pressable>
         </View>
 
-        {/* Reserve space so footer never collides */}
         <View style={[styles.main, { paddingBottom: footerTotalHeight }]}>
           <View style={[styles.row, styles.rowFullBleed]}>
             <View style={styles.bannerRow}>
-              <Pressable
-                onPress={handleOpenDebugRC}
-                hitSlop={12}
-                style={({ pressed }) => [
-                  styles.logoBanner,
-                  pressed ? { opacity: 0.98, transform: [{ scale: 0.999 }] } : null,
-                ]}
-              >
+              <View style={styles.logoBanner}>
                 <Image source={{ uri: LOGO_URI }} style={styles.logo} resizeMode="cover" />
-              </Pressable>
+              </View>
             </View>
           </View>
 
           <AnimatedHint />
-
-          {/* ✅ iOS: show manual paywall button. Android: hidden (auto-paywall handles it) */}
-          {showIOSPaywallButton && (
-            <View style={{ marginBottom: 10 }}>
-              <Pressable
-                onPress={handleRunPaywall}
-                disabled={isLoggingOut}
-                style={({ pressed }) => [
-                  styles.debugPaywallBtn,
-                  pressed && !isLoggingOut && { opacity: 0.9 },
-                  isLoggingOut && { opacity: 0.6 },
-                ]}
-              >
-                <Text style={styles.debugPaywallBtnText}>Run Paywall (debug)</Text>
-              </Pressable>
-            </View>
-          )}
 
           <View style={[styles.actionsWrap, { paddingTop: 4 }]}>
             <View style={styles.actions}>
@@ -650,20 +651,10 @@ export default function HomeScreen() {
             </View>
           </View>
 
-          {/* Optional tiny status line while we auto-check sub on Android */}
-          {SUBSCRIPTIONS_ENABLED && Platform.OS === "android" && (subLoading || !rcReady) && (
+          {SUBSCRIPTIONS_ENABLED && (subLoading || !rcReady) && (
             <View style={{ marginTop: 10 }}>
               <Text style={{ color: BRAND.muted, fontFamily: FONT.regular, fontSize: 12 }}>
                 Checking subscription…
-              </Text>
-            </View>
-          )}
-
-          {/* Optional: tiny dev note so you remember it's off */}
-          {!SUBSCRIPTIONS_ENABLED && (
-            <View style={{ marginTop: 10 }}>
-              <Text style={{ color: BRAND.muted, fontFamily: FONT.regular, fontSize: 12 }}>
-                Subscriptions disabled (dev toggle).
               </Text>
             </View>
           )}
@@ -679,8 +670,10 @@ export default function HomeScreen() {
           ]}
           pointerEvents="none"
         >
-          <Ionicons name="home" size={24} color={BRAND.blue} />
-          <Text style={styles.footerText}>Home</Text>
+          <Ionicons name="shield-checkmark" size={22} color={BRAND.blue} />
+          <Text style={styles.footerText}>
+            Mom&apos;s Scam Helpline{"\n"}Since 2<Text style={styles.footerZero}>0</Text>13
+          </Text>
         </View>
 
         {isLoggingOut && (
@@ -717,15 +710,39 @@ const styles = StyleSheet.create({
   topBar: {
     flexDirection: "row",
     alignItems: "center",
-    paddingTop: 2,
-    paddingBottom: 6,
+    paddingTop: IS_ANDROID ? 0 : 2,
+    paddingBottom: IS_ANDROID ? 4 : 6,
+  },
+
+  debugChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: IS_ANDROID ? 6 : 8,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    backgroundColor: BRAND.blueSoft,
+    borderWidth: 1,
+    borderColor: BRAND.blueBorder,
+  },
+
+  debugChipPressed: {
+    opacity: 0.85,
+    transform: [{ scale: 0.99 }],
+  },
+
+  debugChipText: {
+    color: BRAND.blue,
+    fontFamily: FONT.medium,
+    fontSize: IS_ANDROID ? 13 : 14,
+    letterSpacing: 0.35,
   },
 
   logoutChip: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    paddingVertical: 8,
+    paddingVertical: IS_ANDROID ? 6 : 8,
     paddingHorizontal: 12,
     borderRadius: 999,
     backgroundColor: BRAND.blueSoft,
@@ -741,7 +758,7 @@ const styles = StyleSheet.create({
   logoutChipText: {
     color: BRAND.blue,
     fontFamily: FONT.medium,
-    fontSize: 14,
+    fontSize: IS_ANDROID ? 13 : 14,
     letterSpacing: 0.35,
   },
 
@@ -766,8 +783,8 @@ const styles = StyleSheet.create({
   logo: { width: "100%", height: "100%" },
 
   hintRow: {
-    marginTop: 10,
-    marginBottom: 14,
+    marginTop: IS_ANDROID ? 8 : 10,
+    marginBottom: IS_ANDROID ? 10 : 14,
     width: "100%",
   },
 
@@ -776,7 +793,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    paddingVertical: 12,
+    paddingVertical: IS_ANDROID ? 10 : 12,
     paddingHorizontal: 12,
     borderRadius: 18,
     backgroundColor: BRAND.blueSoft,
@@ -815,7 +832,7 @@ const styles = StyleSheet.create({
   hintLinePrimary: {
     color: BRAND.text,
     fontFamily: FONT.medium,
-    fontSize: 14,
+    fontSize: IS_ANDROID ? 13 : 14,
     letterSpacing: 0.1,
   },
 
@@ -823,31 +840,13 @@ const styles = StyleSheet.create({
     marginTop: 3,
     color: BRAND.muted,
     fontFamily: FONT.regular,
-    fontSize: 13,
-    lineHeight: 17,
+    fontSize: IS_ANDROID ? 12 : 13,
+    lineHeight: IS_ANDROID ? 16 : 17,
   },
 
   actionsWrap: { flex: 1, justifyContent: "flex-start" },
 
-  actions: { width: "100%", gap: 12 },
-
-  debugPaywallBtn: {
-    alignSelf: "stretch",
-    borderRadius: 12,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderWidth: 1,
-    borderColor: BRAND.blueBorder,
-    backgroundColor: BRAND.blueSoft,
-  },
-
-  debugPaywallBtnText: {
-    color: BRAND.blue,
-    fontFamily: FONT.medium,
-    fontSize: 14,
-    letterSpacing: 0.2,
-    textAlign: "center",
-  },
+  actions: { width: "100%", gap: IS_ANDROID ? 10 : 12 },
 
   bigBtn: {
     width: "100%",
@@ -857,7 +856,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: BRAND.border,
     borderRadius: 22,
-    paddingVertical: 24,
+    paddingVertical: IS_ANDROID ? 20 : 24,
     paddingHorizontal: 20,
     backgroundColor: "#FFFFFF",
     shadowColor: "#000",
@@ -890,18 +889,18 @@ const styles = StyleSheet.create({
   bigBtnText: {
     color: BRAND.text,
     fontFamily: FONT.medium,
-    fontSize: 24,
-    letterSpacing: 1.0,
+    fontSize: IS_ANDROID ? 21 : 24,
+    letterSpacing: IS_ANDROID ? 0.7 : 1.0,
     flexShrink: 1,
   },
 
-  bigBtnTextNarrow: { letterSpacing: 0.4 },
+  bigBtnTextNarrow: { letterSpacing: IS_ANDROID ? 0.25 : 0.4 },
 
   btnSubText: {
-    marginTop: 6,
+    marginTop: IS_ANDROID ? 4 : 6,
     color: BRAND.muted,
     fontFamily: FONT.regular,
-    fontSize: 14,
+    fontSize: IS_ANDROID ? 13 : 14,
     letterSpacing: 0.2,
   },
 
@@ -910,23 +909,27 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-
     alignItems: "center",
     justifyContent: "center",
-
-    paddingTop: 8,
+    paddingTop: IS_ANDROID ? 6 : 8,
     borderTopWidth: 1,
     borderTopColor: "#EEF2F7",
     gap: 4,
-
     backgroundColor: BRAND.screenBg,
   },
 
   footerText: {
+    fontSize: 14,
     color: BRAND.muted,
     fontFamily: FONT.regular,
-    fontSize: 14,
-    letterSpacing: 0.25,
+    textAlign: "center",
+  },
+
+  footerZero: {
+    fontFamily: Platform.select({
+      ios: "System",
+      android: "sans-serif",
+    }),
   },
 
   logoutOverlay: {
@@ -944,7 +947,7 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     borderWidth: 1,
     borderColor: BRAND.border,
-    paddingVertical: 18,
+    paddingVertical: IS_ANDROID ? 16 : 18,
     paddingHorizontal: 16,
     alignItems: "center",
     shadowColor: "#000",
@@ -958,7 +961,7 @@ const styles = StyleSheet.create({
     marginTop: 12,
     color: BRAND.text,
     fontFamily: FONT.semi,
-    fontSize: 18,
+    fontSize: IS_ANDROID ? 17 : 18,
     letterSpacing: 0.3,
   },
 
@@ -966,8 +969,8 @@ const styles = StyleSheet.create({
     marginTop: 6,
     color: BRAND.muted,
     fontFamily: FONT.regular,
-    fontSize: 14,
+    fontSize: IS_ANDROID ? 13 : 14,
     textAlign: "center",
-    lineHeight: 18,
+    lineHeight: IS_ANDROID ? 17 : 18,
   },
 });

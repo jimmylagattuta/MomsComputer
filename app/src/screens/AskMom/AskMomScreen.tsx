@@ -126,7 +126,7 @@ export default function AskMomScreen() {
 
   const hasConversation = messages.length > 0;
 
-  // ✅ Keyboard driven animation (works on BOTH iOS + Android, regardless of "resize" mode)
+  // ✅ Keyboard driven animation
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   const kbHeight = useRef(new Animated.Value(0)).current;
 
@@ -176,7 +176,8 @@ export default function AskMomScreen() {
   // ✅ Keyboard listeners:
   // - iOS uses WillShow/WillHide for perfect sync with animation
   // - Android uses DidShow/DidHide (more reliable)
-  // We animate the bottom stack by the REAL keyboard height => always hugs keyboard.
+  // iOS gets translated by the visible keyboard height.
+  // Android is usually already resized by the system, so don't manually lift it.
   useEffect(() => {
     const showEvent =
       Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
@@ -186,11 +187,11 @@ export default function AskMomScreen() {
     const showSub = Keyboard.addListener(showEvent as any, (e: any) => {
       const rawH = Math.max(0, e?.endCoordinates?.height || 0);
 
-      // These two numbers are the “one stone” calibration.
-      // - iOS: subtract insets.bottom because rawH often includes it.
-      // - Android: add a tiny bump because edge-to-edge / IME often needs more lift.
       const iosLift = Math.max(0, rawH - insets.bottom);
-      const androidLift = rawH + Math.max(insets.bottom, 0) + 6;
+
+      // ✅ Android usually already resizes the layout,
+      // so keep manual lift at 0 to avoid sending the composer too high.
+      const androidLift = 0;
 
       const lift = Platform.OS === "ios" ? iosLift : androidLift;
 
@@ -212,14 +213,8 @@ export default function AskMomScreen() {
   }, [kbHeight, insets.bottom]);
 
   /**
-   * ✅ When keyboard is open, the composer stack is translated upward
-   * which OVERLAYS the ScrollView (it does not resize it).
-   *
-   * So we must:
-   * 1) Add extra ScrollView bottom padding:
-   *    - bottomStackHeight (input/buttons)
-   *    - plus keyboardLift (because the overlay is lifted upward into the chat)
-   * 2) Then scroll to bottom.
+   * ✅ When keyboard is open, the composer stack is translated upward on iOS.
+   * Android is typically already resized, so we do not add extra lift there.
    */
   useEffect(() => {
     if (!keyboardOpen) return;
@@ -364,7 +359,7 @@ export default function AskMomScreen() {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsMultipleSelection: true,
-        selectionLimit: remaining, // iOS 14+; on some Android pickers this may behave like single-pick
+        selectionLimit: remaining,
         quality: 0.9,
       });
 
@@ -381,14 +376,13 @@ export default function AskMomScreen() {
           convertedUris.push(jpegUri);
         } catch (err) {
           console.log("IMAGE CONVERT FAILED", u, err);
-          // fallback: still try original
           convertedUris.push(u);
         }
       }
 
       const picked: ComposerImage[] = convertedUris.map((uri) => ({
         uri,
-        loading: true, // ✅ show placeholder/spinner until thumb decodes
+        loading: true,
       }));
 
       setComposerImages((prev) => {
@@ -417,7 +411,6 @@ export default function AskMomScreen() {
   const handleSend = async () => {
     const text = input.trim();
 
-    // ✅ allow sending images with no text
     if (!text && composerImages.length === 0) {
       Alert.alert(
         "Type a message",
@@ -426,8 +419,6 @@ export default function AskMomScreen() {
       return;
     }
 
-    // ✅ IMPORTANT: snapshot images BEFORE clearing them,
-    // and pass them into askMom(...) so it uses multipart.
     const imagesToSend = [...composerImages];
 
     Keyboard.dismiss();
@@ -441,7 +432,6 @@ export default function AskMomScreen() {
       images: imagesToSend.length ? imagesToSend : [],
     };
 
-    // ✅ clear local attachments once queued
     setComposerImages([]);
 
     const thinkingId = uid();
@@ -460,7 +450,6 @@ export default function AskMomScreen() {
     startThinkingAnimation(thinkingId, thinkingBase);
 
     try {
-      // ✅ PASS IMAGES HERE
       const res = await askMom(text, conversationId, imagesToSend);
 
       if (!conversationId) setConversationId(res.conversation_id);
@@ -472,17 +461,15 @@ export default function AskMomScreen() {
         prev.map((m) =>
           m.id === thinkingId
             ? {
-              ...m,
-              text: assistantText,
-              pending: false,
-
-              // ✅ attach contact panel fields onto assistant message
-              show_contact_panel: !!res.show_contact_panel,
-              escalation_reason: res.escalation_reason || null,
-              contact_actions: res.contact_actions || null,
-              contact_draft: res.contact_draft || null,
-              contact_targets: res.contact_targets || null,
-            }
+                ...m,
+                text: assistantText,
+                pending: false,
+                show_contact_panel: !!res.show_contact_panel,
+                escalation_reason: res.escalation_reason || null,
+                contact_actions: res.contact_actions || null,
+                contact_draft: res.contact_draft || null,
+                contact_targets: res.contact_targets || null,
+              }
             : m
         )
       );
@@ -501,11 +488,11 @@ export default function AskMomScreen() {
         prev.map((m) =>
           m.id === thinkingId
             ? {
-              ...m,
-              text:
-                "I couldn’t reach the server right now. Please try again.\n\n(If this is urgent or involves money/codes, don’t proceed—tell me what it said.)",
-              pending: false,
-            }
+                ...m,
+                text:
+                  "I couldn’t reach the server right now. Please try again.\n\n(If this is urgent or involves money/codes, don’t proceed—tell me what it said.)",
+                pending: false,
+              }
             : m
         )
       );
@@ -521,7 +508,7 @@ export default function AskMomScreen() {
     stopThinkingAnimation();
     Keyboard.dismiss();
     setInput("");
-    setComposerImages([]); // ✅ clear attachments too
+    setComposerImages([]);
     setMessages([]);
     setLoading(false);
     setConversationId(undefined);
@@ -531,25 +518,17 @@ export default function AskMomScreen() {
     return () => stopThinkingAnimation();
   }, []);
 
-  /**
-   * ✅ Safe footer padding:
-   * - Android 3-button nav spacing
-   * - iOS safe area bottom
-   */
   const footerSafePad =
     Platform.OS === "android"
       ? Math.max(insets.bottom, 12) + 10
       : insets.bottom;
 
-  // We ONLY hide the home footer button while typing.
   const showHomeFooterButton = !keyboardOpen;
 
-  // ✅ Snug padding:
-  // - exactly the measured bottom stack height (composer + optional home button)
-  // - plus keyboardLift when open (because the stack overlays the chat higher up)
-  // - plus a tiny breathing room so the last bubble doesn't touch the input border
+  // ✅ iOS needs extra keyboard lift padding because composer is translated upward.
+  // ✅ Android usually does not, because the system already resizes the screen.
   const scrollBottomPad =
-    bottomStackHeight + (keyboardOpen ? keyboardLift : 0) + 8;
+    bottomStackHeight + (Platform.OS === "ios" && keyboardOpen ? keyboardLift : 0) + 8;
 
   return (
     <SafeAreaView style={styles.page}>
@@ -563,12 +542,10 @@ export default function AskMomScreen() {
         />
 
         <View style={styles.headerRow}>
-          {/* Center: Ask Mom stays perfectly centered */}
           <View style={styles.headerCenter}>
             <AskMomHeader onOpenHistory={() => setDrawerOpen(true)} />
           </View>
 
-          {/* Right: Mom’s Scam Helpline stack */}
           <View style={styles.scamlineRight}>
             <Ionicons name="shield-checkmark" size={18} color={BRAND.blue} />
             <Text style={styles.scamlineText}>
@@ -576,7 +553,6 @@ export default function AskMomScreen() {
             </Text>
           </View>
         </View>
-
 
         <ScrollView
           ref={scrollRef}
@@ -605,7 +581,6 @@ export default function AskMomScreen() {
           )}
         </ScrollView>
 
-        {/* ✅ Bottom stack: we animate it upward by keyboard height on BOTH platforms */}
         <Animated.View
           style={{
             transform: [
@@ -615,7 +590,6 @@ export default function AskMomScreen() {
             ],
           }}
         >
-          {/* ✅ Measure the FULL stack (composer + optional home button) */}
           <View
             onLayout={(e) => {
               const h = Math.max(0, e?.nativeEvent?.layout?.height || 0);
@@ -636,7 +610,7 @@ export default function AskMomScreen() {
               images={composerImages}
               onPressAddImage={handlePressAddImage}
               onRemoveImage={handleRemoveImage}
-              onImageLoaded={handleImageLoaded} // ✅ clears placeholder spinners per-tile
+              onImageLoaded={handleImageLoaded}
             />
 
             {showHomeFooterButton ? (
@@ -673,7 +647,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
 
-  // ✅ Keeps AskMomHeader centered no matter what’s on the right
   headerCenter: {
     position: "absolute",
     left: 0,
@@ -682,7 +655,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
 
-  // ✅ Right-side “Mom’s Scam / Helpline since / 2013”
   scamlineRight: {
     alignSelf: "center",
     marginLeft: "auto",
@@ -698,8 +670,6 @@ const styles = StyleSheet.create({
     lineHeight: 13,
   },
 
-
-  // ✅ Badge styling (matches the sign-in footer vibe, but compact for chat header)
   momBadge: {
     alignItems: "center",
     justifyContent: "center",
