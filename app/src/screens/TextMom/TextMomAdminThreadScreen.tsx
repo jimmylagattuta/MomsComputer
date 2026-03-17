@@ -173,6 +173,19 @@ export default function TextMomAdminThreadScreen() {
               : styles.messageBubbleTheirs,
           ]}
         >
+          {system ? (
+            <View style={styles.systemHeaderRow}>
+              <View style={styles.systemIconWrap}>
+                <Ionicons
+                  name="shield-checkmark"
+                  size={14}
+                  color={BRAND.blueDark}
+                />
+              </View>
+              <Text style={styles.systemLabel}>System</Text>
+            </View>
+          ) : null}
+
           {!!item.body && (
             <Text
               style={[
@@ -235,12 +248,24 @@ export default function TextMomAdminThreadScreen() {
 
         <View style={styles.screen}>
           <View style={styles.headerWrap}>
-            <Pressable onPress={() => router.back()} style={styles.backBtn}>
+            <Pressable
+              onPress={() => router.back()}
+              style={({ pressed }) => [
+                styles.backBtn,
+                pressed && styles.headerBtnPressed,
+              ]}
+            >
               <Ionicons name="chevron-back" size={20} color={BRAND.blue} />
             </Pressable>
 
             <View style={styles.headerTitleWrap}>
+              <View style={styles.badgeRow}>
+                <View style={styles.liveDot} />
+                <Text style={styles.badgeText}>Live support thread</Text>
+              </View>
+
               <Text style={titleStyle}>{getDisplayName(thread)}</Text>
+
               <Text style={styles.headerSubtitle}>
                 {thread?.assigned_agent_name
                   ? `Assigned to ${thread.assigned_agent_name}`
@@ -251,8 +276,13 @@ export default function TextMomAdminThreadScreen() {
 
           {loading ? (
             <View style={styles.loadingWrap}>
-              <ActivityIndicator size="large" color={BRAND.blue} />
-              <Text style={styles.loadingText}>Loading thread…</Text>
+              <View style={styles.loadingOrb}>
+                <ActivityIndicator size="large" color={BRAND.blue} />
+              </View>
+              <Text style={styles.loadingTitle}>Opening thread…</Text>
+              <Text style={styles.loadingText}>
+                Getting the latest messages ready.
+              </Text>
             </View>
           ) : (
             <>
@@ -280,9 +310,10 @@ export default function TextMomAdminThreadScreen() {
 
                   <Pressable
                     onPress={handleSend}
-                    style={[
+                    style={({ pressed }) => [
                       styles.sendBtn,
                       sendDisabled && styles.sendBtnDisabled,
+                      pressed && !sendDisabled && styles.sendBtnPressed,
                     ]}
                     disabled={sendDisabled}
                   >
@@ -341,39 +372,95 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFFFFF",
     borderWidth: 1,
     borderColor: BRAND.blueBorder,
+    shadowColor: "#000",
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
+  },
+
+  headerBtnPressed: {
+    transform: [{ scale: 0.97 }],
+    opacity: 0.92,
   },
 
   headerTitleWrap: {
     flex: 1,
   },
 
+  badgeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 4,
+  },
+
+  liveDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 999,
+    backgroundColor: BRAND.green,
+  },
+
+  badgeText: {
+    color: BRAND.muted,
+    fontFamily: FONT.medium,
+    fontSize: 11,
+    letterSpacing: 0.2,
+    textTransform: "uppercase",
+  },
+
   title: {
     color: BRAND.text,
     fontFamily: FONT.medium,
-    fontSize: 24,
+    fontSize: 28,
+    lineHeight: 32,
   },
 
   titleNarrow: {
-    fontSize: 21,
+    fontSize: 24,
+    lineHeight: 28,
   },
 
   headerSubtitle: {
-    marginTop: 2,
+    marginTop: 3,
     color: BRAND.muted,
     fontFamily: FONT.regular,
-    fontSize: 12,
+    fontSize: 13,
   },
 
   loadingWrap: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    gap: 10,
+    paddingHorizontal: 24,
+  },
+
+  loadingOrb: {
+    width: 76,
+    height: 76,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: BRAND.blueBorder,
+    marginBottom: 14,
+  },
+
+  loadingTitle: {
+    fontFamily: FONT.medium,
+    color: BRAND.text,
+    fontSize: 18,
+    marginBottom: 6,
   },
 
   loadingText: {
-    color: BRAND.muted,
     fontFamily: FONT.regular,
+    color: BRAND.muted,
+    fontSize: 14,
+    textAlign: "center",
+    lineHeight: 20,
   },
 
   messagesList: {
@@ -408,6 +495,11 @@ const styles = StyleSheet.create({
   messageBubbleMine: {
     backgroundColor: BRAND.bubbleMine,
     borderBottomRightRadius: 8,
+    shadowColor: "#000",
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
   },
 
   messageBubbleTheirs: {
@@ -415,12 +507,43 @@ const styles = StyleSheet.create({
     borderBottomLeftRadius: 8,
     borderWidth: 1,
     borderColor: "#E7EEF5",
+    shadowColor: "#000",
+    shadowOpacity: 0.05,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 1,
   },
 
   messageBubbleSystem: {
+    width: "100%",
+    maxWidth: 520,
     backgroundColor: BRAND.bubbleSystemBg,
     borderWidth: 1,
     borderColor: BRAND.bubbleSystemBorder,
+    borderRadius: 20,
+    paddingVertical: 13,
+  },
+
+  systemHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 8,
+  },
+
+  systemIconWrap: {
+    width: 24,
+    height: 24,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#DCEAFF",
+  },
+
+  systemLabel: {
+    color: BRAND.blueDark,
+    fontFamily: FONT.medium,
+    fontSize: 12,
   },
 
   messageText: {
@@ -491,6 +614,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingTop: 10,
     paddingBottom: 10,
+    shadowColor: "#000",
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 5 },
+    elevation: 3,
+    marginTop: 6,
   },
 
   input: {
@@ -516,6 +645,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: BRAND.blue,
+  },
+
+  sendBtnPressed: {
+    backgroundColor: BRAND.blueDark,
+    transform: [{ scale: 0.97 }],
   },
 
   sendBtnDisabled: {

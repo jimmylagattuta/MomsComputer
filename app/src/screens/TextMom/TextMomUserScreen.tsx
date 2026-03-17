@@ -171,7 +171,6 @@ export default function TextMomUserScreen() {
   const threadIdRef = useRef<number | null>(null);
   const threadRef = useRef<SupportTextThread | null>(null);
   const messagesRef = useRef<SupportTextRenderableMessage[]>([]);
-  const bootstrappedRef = useRef(false);
   const modeRef = useRef<ThreadMode>("fresh");
   const introEligibleRef = useRef(false);
   const bootstrapRunIdRef = useRef(0);
@@ -391,13 +390,15 @@ export default function TextMomUserScreen() {
     try {
       setIsBooting(true);
       setLastMessage(null);
-      bootstrappedRef.current = false;
       introEligibleRef.current = false;
       setMessages([]);
       setShowLastThreadDivider(false);
       setStatusBanner(null);
       modeRef.current = "fresh";
       sentInCurrentSessionRef.current = false;
+      setThread(null);
+      threadRef.current = null;
+      threadIdRef.current = null;
 
       const token = await SecureStore.getItemAsync("auth_token");
       if (!token) {
@@ -437,8 +438,6 @@ export default function TextMomUserScreen() {
           (m) => (m as any).visible_to_user !== false
         ) as SupportTextMessage[];
 
-        bootstrappedRef.current = true;
-
         if (nextMessages.length > 0) {
           applyMessages(nextMessages, {
             allowFallback: false,
@@ -472,79 +471,13 @@ export default function TextMomUserScreen() {
       }
 
       modeRef.current = "fresh";
-
-      const threadResponse = await postJson("/v1/support_text_thread", {}, token);
-      if (bootstrapRunIdRef.current !== runId) return;
-
-      if (!threadResponse?.ok) {
-        throw new Error(threadResponse?.json?.error || "Unable to open text thread.");
-      }
-
-      const resolvedThread = threadResponse?.json?.thread || threadResponse?.json;
-      const resolvedThreadIsRecent = isThreadRecent(resolvedThread);
-
-      setStatusBanner(null);
-      bootstrappedRef.current = true;
-      setShowLastThreadDivider(false);
-
-      if (!resolvedThreadIsRecent) {
-        setThread(null);
-        threadRef.current = null;
-        threadIdRef.current = null;
-        introEligibleRef.current = true;
-
-        applyMessages([], {
-          allowFallback: true,
-          includeLastThreadDivider: false,
-        });
-
-        return;
-      }
-
-      setThread(resolvedThread);
-      threadRef.current = resolvedThread;
-      threadIdRef.current = resolvedThread?.id ?? null;
-
-      const threadId = resolvedThread?.id ?? null;
-
-      if (!threadId) {
-        introEligibleRef.current = true;
-        applyMessages([], {
-          allowFallback: true,
-          includeLastThreadDivider: false,
-        });
-        return;
-      }
-
-      introEligibleRef.current = false;
-
-      const firstPass = await fetchMessagesForThread(threadId);
-      if (bootstrapRunIdRef.current !== runId) return;
-
-      if (firstPass.length > 0) {
-        applyMessages(firstPass, {
-          allowFallback: false,
-          includeLastThreadDivider: false,
-        });
-        return;
-      }
-
       introEligibleRef.current = true;
 
-      const secondPass = await fetchMessagesForThread(threadId);
-      if (bootstrapRunIdRef.current !== runId) return;
 
-      if (secondPass.length > 0) {
-        applyMessages(secondPass, {
-          allowFallback: false,
-          includeLastThreadDivider: false,
-        });
-      } else {
-        applyMessages([], {
-          allowFallback: true,
-          includeLastThreadDivider: false,
-        });
-      }
+      applyMessages([], {
+        allowFallback: true,
+        includeLastThreadDivider: false,
+      });
     } catch (e: any) {
       const msg = e?.message || "Unable to open Text Mom.";
       setLastMessage(msg);
@@ -554,7 +487,7 @@ export default function TextMomUserScreen() {
         setIsBooting(false);
       }
     }
-  }, [applyMessages, fetchMessagesForThread, getLiveRecentUiCopy]);
+  }, [applyMessages, getLiveRecentUiCopy]);
 
   useEffect(() => {
     void bootstrap();
@@ -600,7 +533,6 @@ export default function TextMomUserScreen() {
         (m) => (m as any).visible_to_user !== false
       ) as SupportTextMessage[];
 
-      bootstrappedRef.current = true;
       applyMessages(nextMessages, {
         allowFallback: false,
         includeLastThreadDivider: true,
@@ -710,6 +642,7 @@ export default function TextMomUserScreen() {
         threadIdRef.current = freshThread.id;
         activeThreadId = freshThread.id;
         modeRef.current = "fresh";
+        introEligibleRef.current = false;
         setStatusBanner({
           title: "Message sent",
           body: "Mom's Computer has your message. You can add more details here while you wait for a reply.",
