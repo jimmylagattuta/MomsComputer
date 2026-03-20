@@ -1,6 +1,7 @@
-// supportTextThreads.ts
+// app/src/services/api/supportTextThreads.ts
+
 import * as SecureStore from "expo-secure-store";
-import { getJson } from "./client";
+import { API_BASE, getJson, postJson } from "./client";
 
 export type SupportTextThreadSummary = {
   id: number;
@@ -50,10 +51,52 @@ type GetJsonEnvelope<T = any> = {
   json: T;
 };
 
+type PostJsonEnvelope<T = any> = {
+  ok: boolean;
+  status: number;
+  json: T;
+};
+
+type UiImage = {
+  uri: string;
+  name?: string;
+  type?: string;
+};
+
 async function requireToken() {
   const token = await SecureStore.getItemAsync("auth_token");
   if (!token) throw new Error("Missing auth token");
   return token;
+}
+
+async function safeParseJsonFromResponse(res: Response) {
+  const text = await res.text();
+  let json: any = null;
+
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {}
+
+  return { text, json };
+}
+
+function filenameAndMimeFromUri(uri: string, fallbackIndex = 0) {
+  const filenameFromUri =
+    uri?.split("?")[0]?.split("#")[0]?.split("/").pop() ||
+    `textmom-${fallbackIndex}.jpg`;
+
+  const ext = (filenameFromUri.split(".").pop() || "jpg").toLowerCase();
+
+  const mime =
+    ext === "png"
+      ? "image/png"
+      : ext === "webp"
+      ? "image/webp"
+      : ext === "heic"
+      ? "image/heic"
+      : "image/jpeg";
+
+  return { name: filenameFromUri, type: mime };
 }
 
 export async function fetchSupportTextThreads(
@@ -89,4 +132,90 @@ export async function fetchSupportTextThread(
   }
 
   return res.json as SupportTextThreadDetailDTO;
+}
+
+export async function sendSupportTextMessage(
+  threadId: number,
+  body: string,
+  images: UiImage[] = []
+): Promise<SupportTextMessageDTO> {
+  const token = await requireToken();
+
+  console.log("SEND SUPPORT TEXT MESSAGE threadId:", threadId);
+  console.log("SEND SUPPORT TEXT MESSAGE body:", JSON.stringify(body));
+  console.log("SEND SUPPORT TEXT MESSAGE images length:", images.length);
+  console.log("SEND SUPPORT TEXT MESSAGE images:", images);
+
+  // ✅ MULTIPART PATH (IMAGE OR IMAGE + TEXT)
+  if (images.length > 0) {
+    console.log("SEND SUPPORT TEXT MESSAGE USING MULTIPART");
+
+    const fd = new FormData();
+
+    fd.append("thread_id", String(threadId));
+    fd.append("body", body || "");
+
+    images.forEach((img, idx) => {
+      const uri = img?.uri;
+      if (!uri) return;
+
+      const fallback = filenameAndMimeFromUri(uri, idx);
+
+      const payload = {
+        uri,
+        name: img?.name || fallback.name,
+        type: img?.type || fallback.type,
+      };
+
+      console.log("APPENDING IMAGE:", payload);
+
+      fd.append("images[]", payload as any);
+    });
+
+    const res = await fetch(`${API_BASE}/v1/support_text_messages`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+      },
+      body: fd as any,
+    });
+
+    const { json } = await safeParseJsonFromResponse(res);
+
+    console.log("MULTIPART RESPONSE STATUS:", res.status);
+    console.log("MULTIPART RESPONSE JSON:", json);
+
+    if (!res.ok) {
+      throw new Error(
+        json?.error || json?.message || `Send failed (${res.status})`
+      );
+    }
+
+    return json?.message as SupportTextMessageDTO;
+  }
+
+  // ✅ TEXT ONLY PATH
+  console.log("SEND SUPPORT TEXT MESSAGE USING JSON FALLBACK");
+
+  const res = (await postJson(
+    "/v1/support_text_messages",
+    {
+      thread_id: threadId,
+      body,
+      image_signed_ids: [],
+    },
+    token
+  )) as PostJsonEnvelope<{ message: SupportTextMessageDTO }>;
+
+  console.log("JSON FALLBACK RESPONSE STATUS:", res.status);
+  console.log("JSON FALLBACK RESPONSE JSON:", res.json);
+
+  if (!res.ok) {
+    throw new Error(
+      res?.json?.error || res?.json?.message || `Send failed (${res.status})`
+    );
+  }
+
+  return res.json.message;
 }

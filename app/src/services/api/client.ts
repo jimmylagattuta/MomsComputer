@@ -5,8 +5,10 @@
 const USE_LOCAL_API = true; // ⬅️ set to false to use EXPO_PUBLIC_API_BASE_URL
 
 // Your computer's LAN IP + backend port
+// Home
 const LOCAL_API_BASE_URL = "http://192.168.12.141:3000";
-
+// Work
+// const LOCAL_API_BASE_URL = "http://10.7.7.123:3000";
 // Centralized resolver
 export const API_BASE =
   USE_LOCAL_API

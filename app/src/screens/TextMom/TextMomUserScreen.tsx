@@ -24,8 +24,10 @@ import { getJson, postJson } from "../../services/api/client";
 import {
   fetchSupportTextThread,
   fetchSupportTextThreads,
+  sendSupportTextMessage,
   type SupportTextThreadSummary,
 } from "../../services/api/supportTextThreads";
+import ImagePreviewModal from "../AskMom/components/ImagePreviewModal";
 import DebugDropdown from "./components/DebugDropdown";
 import HistoryDrawer from "./components/HistoryDrawer";
 
@@ -87,6 +89,7 @@ type SupportTextMessage = {
   created_at: string;
   intro_message?: boolean;
   author_agent_name?: string | null;
+  visible_to_user?: boolean;
   images: Array<{
     id: number;
     url: string;
@@ -193,12 +196,25 @@ export default function TextMomUserScreen() {
     tone: "recent" | "fresh";
   } | null>(null);
 
+  const [previewUri, setPreviewUri] = useState<string | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
+
   const titleStyle = useMemo(
     () => [styles.title, isNarrow && styles.titleNarrow],
     [isNarrow]
   );
 
   const sendDisabled = isSending || (!draft.trim() && pickedImages.length === 0);
+
+  const openPreview = useCallback((uri: string) => {
+    setPreviewUri(uri);
+    setPreviewOpen(true);
+  }, []);
+
+  const closePreview = useCallback(() => {
+    setPreviewOpen(false);
+    setPreviewUri(null);
+  }, []);
 
   useEffect(() => {
     threadRef.current = thread;
@@ -315,23 +331,6 @@ export default function TextMomUserScreen() {
       setShowLastThreadDivider(false);
     },
     [getLiveRecentUiCopy, user]
-  );
-
-  const fetchMessagesForThread = useCallback(
-    async (threadId: number): Promise<SupportTextMessage[]> => {
-      const token = await SecureStore.getItemAsync("auth_token");
-      if (!token) return [];
-
-      const path = `/v1/support_text_messages?thread_id=${threadId}`;
-      const response = await getJson(path, token);
-
-      if (!response?.ok) return [];
-
-      return (response.json?.messages || []).filter(
-        (m: any) => m?.visible_to_user !== false
-      ) as SupportTextMessage[];
-    },
-    []
   );
 
   const refreshMessages = useCallback(
@@ -473,7 +472,6 @@ export default function TextMomUserScreen() {
       modeRef.current = "fresh";
       introEligibleRef.current = true;
 
-
       applyMessages([], {
         allowFallback: true,
         includeLastThreadDivider: false,
@@ -592,16 +590,13 @@ export default function TextMomUserScreen() {
     setPickedImages((prev) => [...prev, ...nextImages].slice(0, 4));
   };
 
-  const uploadImagesAndGetSignedIds = async (_token: string): Promise<string[]> => {
-    return [];
-  };
-
   const handleSend = async () => {
     if (isSending) return;
 
     const trimmed = draft.trim();
+    const imagesToSend = [...pickedImages];
 
-    if (!trimmed && pickedImages.length === 0) {
+    if (!trimmed && imagesToSend.length === 0) {
       Alert.alert("Nothing to send", "Add a message or image.");
       return;
     }
@@ -643,38 +638,25 @@ export default function TextMomUserScreen() {
         activeThreadId = freshThread.id;
         modeRef.current = "fresh";
         introEligibleRef.current = false;
+
         setStatusBanner({
           title: "Message sent",
           body: "Mom's Computer has your message. You can add more details here while you wait for a reply.",
           tone: "recent",
         });
+
         setShowLastThreadDivider(false);
       }
 
-      const imageSignedIds = await uploadImagesAndGetSignedIds(token);
-
-      const response = await postJson(
-        "/v1/support_text_messages",
-        {
-          body: trimmed,
-          image_signed_ids: imageSignedIds,
-          thread_id: activeThreadId,
-        },
-        token
-      );
-
-      if (!response?.ok) {
-        const msg = response?.json?.error || response?.json?.message || "Unable to send.";
-        Alert.alert("Send failed", msg);
-        return;
-      }
-
-      const createdMessage = response?.json?.message as
-        | SupportTextMessage
-        | undefined;
-
       setDraft("");
       setPickedImages([]);
+
+      const createdMessage = await sendSupportTextMessage(
+        activeThreadId,
+        trimmed,
+        imagesToSend
+      );
+
       introEligibleRef.current = false;
       sentInCurrentSessionRef.current = true;
 
@@ -781,11 +763,27 @@ export default function TextMomUserScreen() {
           {!!item.images?.length && (
             <View style={styles.imageGrid}>
               {item.images.map((img) => (
-                <Image
+                <Pressable
                   key={img.id}
-                  source={{ uri: img.url }}
-                  style={styles.messageImage}
-                />
+                  onPress={() => openPreview(img.url)}
+                  style={({ pressed }) => [
+                    styles.messageImagePressable,
+                    pressed && styles.imagePressed,
+                  ]}
+                >
+                  <Image
+                    source={{ uri: img.url }}
+                    style={styles.messageImage}
+                    resizeMode="cover"
+                    onLoad={() => {
+                      console.log("✅ IMAGE LOADED:", img.url);
+                    }}
+                    onError={(e) => {
+                      console.log("❌ IMAGE FAILED:", img.url);
+                      console.log("ERROR:", e?.nativeEvent);
+                    }}
+                  />
+                </Pressable>
               ))}
             </View>
           )}
@@ -830,6 +828,12 @@ export default function TextMomUserScreen() {
             threads={threads}
             onSelectThread={handleSelectThread}
             onUpdateThreads={setThreads}
+          />
+
+          <ImagePreviewModal
+            open={previewOpen}
+            uri={previewUri}
+            onClose={closePreview}
           />
 
           <View style={styles.headerWrap}>
@@ -965,10 +969,19 @@ export default function TextMomUserScreen() {
                         key={`${img.uri}-${idx}`}
                         style={styles.pickedImageWrap}
                       >
-                        <Image
-                          source={{ uri: img.uri }}
-                          style={styles.pickedImage}
-                        />
+                        <Pressable
+                          onPress={() => openPreview(img.uri)}
+                          style={({ pressed }) => [
+                            styles.pickedImagePressable,
+                            pressed && styles.imagePressed,
+                          ]}
+                        >
+                          <Image
+                            source={{ uri: img.uri }}
+                            style={styles.pickedImage}
+                          />
+                        </Pressable>
+
                         <Pressable
                           style={styles.removeImageBtn}
                           onPress={() =>
@@ -1424,11 +1437,21 @@ const styles = StyleSheet.create({
     gap: 8,
   },
 
+  messageImagePressable: {
+    alignSelf: "flex-start",
+    borderRadius: 14,
+  },
+
   messageImage: {
-    width: 190,
-    height: 190,
-    borderRadius: 16,
+    width: 96,
+    height: 96,
+    borderRadius: 12,
     backgroundColor: "#E5E7EB",
+  },
+
+  imagePressed: {
+    opacity: 0.9,
+    transform: [{ scale: 0.985 }],
   },
 
   pickedImagesCard: {
@@ -1455,10 +1478,14 @@ const styles = StyleSheet.create({
     position: "relative",
   },
 
+  pickedImagePressable: {
+    borderRadius: 16,
+  },
+
   pickedImage: {
-    width: 76,
-    height: 76,
-    borderRadius: 18,
+    width: 68,
+    height: 68,
+    borderRadius: 16,
     backgroundColor: "#E5E7EB",
     borderWidth: 1,
     borderColor: "#E6EDF5",

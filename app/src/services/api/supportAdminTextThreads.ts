@@ -1,5 +1,5 @@
 import * as SecureStore from "expo-secure-store";
-import { getJson, postJson } from "./client";
+import { API_BASE, getJson, postJson } from "./client";
 
 export type AdminSupportTextThreadSummary = {
   id: number;
@@ -52,6 +52,36 @@ async function requireToken() {
   const token = await SecureStore.getItemAsync("auth_token");
   if (!token) throw new Error("Missing auth token");
   return token;
+}
+
+async function safeParseJsonFromResponse(res: Response) {
+  const text = await res.text();
+  let json: any = null;
+
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {}
+
+  return { text, json };
+}
+
+function filenameAndMimeFromUri(uri: string, fallbackIndex = 0) {
+  const filenameFromUri =
+    uri?.split("?")[0]?.split("#")[0]?.split("/").pop() ||
+    `support-${Date.now()}-${fallbackIndex}.jpg`;
+
+  const ext = (filenameFromUri.split(".").pop() || "jpg").toLowerCase();
+
+  const mime =
+    ext === "png"
+      ? "image/png"
+      : ext === "webp"
+      ? "image/webp"
+      : ext === "heic"
+      ? "image/heic"
+      : "image/jpeg";
+
+  return { name: filenameFromUri, type: mime };
 }
 
 export async function fetchAdminSupportThreads(): Promise<
@@ -108,15 +138,55 @@ export async function fetchAdminSupportMessages(
 export async function sendAdminSupportMessage(
   threadId: number,
   body: string,
-  image_signed_ids: string[] = []
+  images: Array<{ uri: string; name?: string; type?: string }> = []
 ): Promise<AdminSupportTextMessage> {
   const token = await requireToken();
+
+  if (images.length > 0) {
+    const fd = new FormData();
+    fd.append("body", body || "");
+
+    images.forEach((img, idx) => {
+      const uri = img?.uri;
+      if (!uri) return;
+
+      const fallback = filenameAndMimeFromUri(uri, idx);
+
+      fd.append("images[]", {
+        uri,
+        name: img?.name || fallback.name,
+        type: img?.type || fallback.type,
+      } as any);
+    });
+
+    const res = await fetch(
+      `${API_BASE}/v1/support/text_threads/${threadId}/messages`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json",
+        },
+        body: fd as any,
+      }
+    );
+
+    const { json } = await safeParseJsonFromResponse(res);
+
+    if (!res.ok) {
+      throw new Error(
+        json?.error || json?.message || `Unable to send reply (${res.status})`
+      );
+    }
+
+    return json?.message as AdminSupportTextMessage;
+  }
 
   const res = await postJson(
     `/v1/support/text_threads/${threadId}/messages`,
     {
       body,
-      image_signed_ids,
+      image_signed_ids: [],
     },
     token
   );

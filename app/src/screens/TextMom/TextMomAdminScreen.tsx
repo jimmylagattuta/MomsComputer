@@ -1,8 +1,10 @@
 import { Ionicons } from "@expo/vector-icons";
+import * as ImagePicker from "expo-image-picker";
 import { useFocusEffect, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   AppState,
   AppStateStatus,
   FlatList,
@@ -28,6 +30,7 @@ import {
   type AdminSupportTextMessage,
   type AdminSupportTextThreadSummary,
 } from "../../services/api/supportAdminTextThreads";
+import ImagePreviewModal from "../AskMom/components/ImagePreviewModal";
 import { H_PADDING } from "../AskMom/theme";
 import TextMomFooterHomeButton from "./components/TextMomFooterHomeButton";
 import TextMomHeader from "./components/TextMomHeader";
@@ -57,6 +60,12 @@ const BRAND = {
 };
 
 const ADMIN_THREADS_POLL_MS = 5000;
+
+type UiImage = {
+  uri: string;
+  name: string;
+  type: string;
+};
 
 function formatThreadTime(iso?: string | null) {
   if (!iso) return "";
@@ -98,6 +107,24 @@ function getSubline(thread: AdminSupportTextThreadSummary) {
   return snap.email || snap.phone || "Support user";
 }
 
+function mergeMessagesById(
+  incoming: AdminSupportTextMessage[]
+): AdminSupportTextMessage[] {
+  const map = new Map<number, AdminSupportTextMessage>();
+
+  incoming.forEach((message) => {
+    map.set(message.id, message);
+  });
+
+  return [...map.values()].sort((a, b) => {
+    const aTime = new Date(a.created_at || 0).getTime();
+    const bTime = new Date(b.created_at || 0).getTime();
+
+    if (aTime !== bTime) return aTime - bTime;
+    return a.id - b.id;
+  });
+}
+
 export default function TextMomAdminScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -127,6 +154,9 @@ export default function TextMomAdminScreen() {
   const [threadError, setThreadError] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  const [pickedImages, setPickedImages] = useState<UiImage[]>([]);
+  const [previewUri, setPreviewUri] = useState<string | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   const unreadCount = useMemo(
     () => threads.filter((t) => t.support_unread).length,
@@ -138,8 +168,18 @@ export default function TextMomAdminScreen() {
     [isNarrow]
   );
 
-  const sendDisabled = sending || !draft.trim();
+  const sendDisabled = sending || (!draft.trim() && pickedImages.length === 0);
   const showingThread = !!selectedThread;
+
+  const openPreview = useCallback((uri: string) => {
+    setPreviewUri(uri);
+    setPreviewOpen(true);
+  }, []);
+
+  const closePreview = useCallback(() => {
+    setPreviewOpen(false);
+    setPreviewUri(null);
+  }, []);
 
   const loadThreads = useCallback(
     async (mode: "initial" | "refresh" | "silent" = "initial") => {
@@ -189,7 +229,7 @@ export default function TextMomAdminScreen() {
 
       setSelectedThread(threadRow);
       selectedThreadIdRef.current = threadRow.id;
-      setThreadMessages(messageRows);
+      setThreadMessages(mergeMessagesById(messageRows));
     } catch (e: any) {
       setThreadError(e?.message || "Unable to load support thread.");
     } finally {
@@ -208,7 +248,7 @@ export default function TextMomAdminScreen() {
       ]);
 
       setSelectedThread(threadRow);
-      setThreadMessages(messageRows);
+      setThreadMessages((prev) => mergeMessagesById([...prev, ...messageRows]));
 
       setThreads((prev) =>
         prev.map((row) => (row.id === threadRow.id ? threadRow : row))
@@ -221,6 +261,7 @@ export default function TextMomAdminScreen() {
   const handleSelectThread = useCallback(
     async (threadId: number) => {
       setDraft("");
+      setPickedImages([]);
       setThreadMessages([]);
       await loadSelectedThread(threadId);
     },
@@ -233,29 +274,69 @@ export default function TextMomAdminScreen() {
     setThreadMessages([]);
     setThreadError(null);
     setDraft("");
+    setPickedImages([]);
   }, []);
+
+  const pickImages = useCallback(async () => {
+    if (pickedImages.length >= 4) {
+      Alert.alert("Image limit", "Maximum of 4 images.");
+      return;
+    }
+
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert("Permission needed", "Allow photo access.");
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"],
+      allowsMultipleSelection: true,
+      selectionLimit: 4 - pickedImages.length,
+      quality: 0.82,
+    });
+
+    if (result.canceled) return;
+
+    const nextImages: UiImage[] = result.assets.map((asset, index) => ({
+      uri: asset.uri,
+      name: asset.fileName || `support-${Date.now()}-${index}.jpg`,
+      type: asset.mimeType || "image/jpeg",
+    }));
+
+    setPickedImages((prev) => [...prev, ...nextImages].slice(0, 4));
+  }, [pickedImages.length]);
 
   const handleSend = useCallback(async () => {
     const activeThreadId = selectedThreadIdRef.current;
     const trimmed = draft.trim();
+    const imagesToSend = [...pickedImages];
 
-    if (!activeThreadId || !trimmed || sending) return;
+    if (!activeThreadId || (!trimmed && imagesToSend.length === 0) || sending) {
+      return;
+    }
 
     try {
       setSending(true);
-
-      const created = await sendAdminSupportMessage(activeThreadId, trimmed, []);
       setDraft("");
-      setThreadMessages((prev) => [...prev, created]);
+      setPickedImages([]);
+
+      const created = await sendAdminSupportMessage(
+        activeThreadId,
+        trimmed,
+        imagesToSend
+      );
+
+      setThreadMessages((prev) => mergeMessagesById([...prev, created]));
 
       await loadThreads("silent");
       await refreshSelectedThreadMessages();
     } catch (e: any) {
-      setThreadError(e?.message || "Unable to send reply.");
+      Alert.alert("Send failed", e?.message || "Unable to send reply.");
     } finally {
       setSending(false);
     }
-  }, [draft, sending, loadThreads, refreshSelectedThreadMessages]);
+  }, [draft, pickedImages, sending, loadThreads, refreshSelectedThreadMessages]);
 
   const stopPolling = useCallback(() => {
     if (pollingIntervalRef.current) {
@@ -308,11 +389,7 @@ export default function TextMomAdminScreen() {
 
       appStateRef.current = nextAppState;
 
-      if (
-        nextAppState === "active" &&
-        isFocusedRef.current &&
-        wasBackgrounded
-      ) {
+      if (nextAppState === "active" && isFocusedRef.current && wasBackgrounded) {
         void loadThreads("silent");
 
         if (selectedThreadIdRef.current) {
@@ -398,12 +475,21 @@ export default function TextMomAdminScreen() {
 
           {!!item.images?.length && (
             <View style={styles.imageGrid}>
-              {item.images.map((img) => (
-                <Image
-                  key={img.id}
-                  source={{ uri: img.url }}
-                  style={styles.messageImage}
-                />
+              {item.images.map((img, index) => (
+                <Pressable
+                  key={`${item.id}-${img.id}-${index}`}
+                  onPress={() => openPreview(img.url)}
+                  style={({ pressed }) => [
+                    styles.messageImagePressable,
+                    pressed && styles.imagePressed,
+                  ]}
+                >
+                  <Image
+                    source={{ uri: img.url }}
+                    style={styles.messageImage}
+                    resizeMode="cover"
+                  />
+                </Pressable>
               ))}
             </View>
           )}
@@ -449,6 +535,12 @@ export default function TextMomAdminScreen() {
             },
           ]}
         >
+          <ImagePreviewModal
+            open={previewOpen}
+            uri={previewUri}
+            onClose={closePreview}
+          />
+
           {!showingThread ? (
             <>
               <TextMomHeader title="Text Support" />
@@ -543,7 +635,7 @@ export default function TextMomAdminScreen() {
 
                       return (
                         <Pressable
-                          key={thread.id}
+                          key={`thread-${thread.id}`}
                           onPress={() => void handleSelectThread(thread.id)}
                           style={({ pressed }) => [
                             styles.threadCard,
@@ -678,7 +770,7 @@ export default function TextMomAdminScreen() {
                   <FlatList
                     ref={flatListRef}
                     data={threadMessages}
-                    keyExtractor={(item) => String(item.id)}
+                    keyExtractor={(item) => `msg-${item.id}`}
                     renderItem={renderMessage}
                     contentContainerStyle={styles.messagesList}
                     showsVerticalScrollIndicator={false}
@@ -686,8 +778,65 @@ export default function TextMomAdminScreen() {
                     style={{ flex: 1 }}
                   />
 
+                  {!!pickedImages.length && (
+                    <View style={styles.pickedImagesCard}>
+                      <View style={styles.pickedImagesHeader}>
+                        <Text style={styles.pickedImagesTitle}>
+                          Attachments ({pickedImages.length}/4)
+                        </Text>
+                      </View>
+
+                      <View style={styles.pickedImagesRow}>
+                        {pickedImages.map((img, idx) => (
+                          <View
+                            key={`${img.uri}-${idx}`}
+                            style={styles.pickedImageWrap}
+                          >
+                            <Pressable
+                              onPress={() => openPreview(img.uri)}
+                              style={({ pressed }) => [
+                                styles.pickedImagePressable,
+                                pressed && styles.imagePressed,
+                              ]}
+                            >
+                              <Image
+                                source={{ uri: img.uri }}
+                                style={styles.pickedImage}
+                              />
+                            </Pressable>
+
+                            <Pressable
+                              style={styles.removeImageBtn}
+                              onPress={() =>
+                                setPickedImages((prev) =>
+                                  prev.filter((_, i) => i !== idx)
+                                )
+                              }
+                            >
+                              <Ionicons name="close" size={14} color="#FFF" />
+                            </Pressable>
+                          </View>
+                        ))}
+                      </View>
+                    </View>
+                  )}
+
                   <View style={styles.composerOuter}>
                     <View style={styles.composerWrap}>
+                      <Pressable
+                        onPress={pickImages}
+                        style={({ pressed }) => [
+                          styles.attachBtn,
+                          pressed && styles.attachBtnPressed,
+                        ]}
+                      >
+                        <Ionicons
+                          name="image-outline"
+                          size={20}
+                          color={BRAND.blue}
+                        />
+                      </Pressable>
+
                       <TextInput
                         value={draft}
                         onChangeText={setDraft}
@@ -1235,11 +1384,75 @@ const styles = StyleSheet.create({
     gap: 8,
   },
 
+  messageImagePressable: {
+    alignSelf: "flex-start",
+    borderRadius: 12,
+  },
+
   messageImage: {
-    width: 190,
-    height: 190,
-    borderRadius: 16,
+    width: 96,
+    height: 96,
+    borderRadius: 12,
     backgroundColor: "#E5E7EB",
+  },
+
+  imagePressed: {
+    opacity: 0.9,
+    transform: [{ scale: 0.985 }],
+  },
+
+  pickedImagesCard: {
+    marginBottom: 10,
+    paddingTop: 10,
+  },
+
+  pickedImagesHeader: {
+    marginBottom: 8,
+  },
+
+  pickedImagesTitle: {
+    color: BRAND.muted,
+    fontFamily: FONT.medium,
+    fontSize: 12,
+  },
+
+  pickedImagesRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+
+  pickedImageWrap: {
+    position: "relative",
+  },
+
+  pickedImagePressable: {
+    borderRadius: 14,
+  },
+
+  pickedImage: {
+    width: 56,
+    height: 56,
+    borderRadius: 14,
+    backgroundColor: "#E5E7EB",
+    borderWidth: 1,
+    borderColor: "#E6EDF5",
+  },
+
+  removeImageBtn: {
+    position: "absolute",
+    top: -7,
+    right: -7,
+    width: 24,
+    height: 24,
+    borderRadius: 999,
+    backgroundColor: BRAND.red,
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#000",
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 2,
   },
 
   composerOuter: {
@@ -1265,6 +1478,22 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 5 },
     elevation: 3,
     marginTop: 6,
+  },
+
+  attachBtn: {
+    width: 46,
+    height: 46,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: BRAND.blueSoft,
+    borderWidth: 1,
+    borderColor: BRAND.blueBorder,
+  },
+
+  attachBtnPressed: {
+    transform: [{ scale: 0.97 }],
+    opacity: 0.92,
   },
 
   input: {

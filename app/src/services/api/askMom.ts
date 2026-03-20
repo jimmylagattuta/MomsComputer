@@ -75,9 +75,9 @@ export async function askMom(
   conversationId?: number,
   images: ComposerImage[] = []
 ): Promise<AskMomResponse> {
-  console.log("📡 askMom() called. images length:", images?.length || 0);
-  console.log("📡 askMom() convoId:", conversationId);
-  console.log("📡 askMom() text:", JSON.stringify(text));
+  // console.log("📡 askMom() called. images length:", images?.length || 0);
+  // console.log("📡 askMom() convoId:", conversationId);
+  // console.log("📡 askMom() text:", JSON.stringify(text));
 
   const token = await SecureStore.getItemAsync("auth_token");
   if (!token) throw new Error("Missing auth token");
