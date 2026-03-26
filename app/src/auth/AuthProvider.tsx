@@ -34,7 +34,7 @@ const STORAGE_KEY = "momscomputer:isAuthed";
 const USE_LOCAL_API = true; // ⬅️ set to false to use EXPO_PUBLIC_API_BASE_URL
 
 // Your computer's LAN IP (from ipconfig) + your Rails port
-const LOCAL_API_BASE_URL = "http://192.168.12.141:3000";
+const LOCAL_API_BASE_URL = "http://192.168.12.142:3000";
 
 // Centralized resolver: use this everywhere (never reference env directly elsewhere)
 export const API_BASE_URL = USE_LOCAL_API

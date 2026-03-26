@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import type { Cable } from "@rails/actioncable";
 import * as ImagePicker from "expo-image-picker";
 import { useFocusEffect, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -6,7 +7,6 @@ import {
   ActivityIndicator,
   Alert,
   AppState,
-  AppStateStatus,
   FlatList,
   Image,
   KeyboardAvoidingView,
@@ -19,6 +19,7 @@ import {
   TextInput,
   View,
   useWindowDimensions,
+  type AppStateStatus,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { FONT } from "../../../src/theme";
@@ -30,6 +31,9 @@ import {
   type AdminSupportTextMessage,
   type AdminSupportTextThreadSummary,
 } from "../../services/api/supportAdminTextThreads";
+import { buildCableConsumer } from "../../services/cable/createCable";
+import { subscribeToSupportInbox } from "../../services/cable/supportTextInboxSubscription";
+import { subscribeToSupportTextThread } from "../../services/cable/supportTextThreadSubscription";
 import ImagePreviewModal from "../AskMom/components/ImagePreviewModal";
 import { H_PADDING } from "../AskMom/theme";
 import TextMomFooterHomeButton from "./components/TextMomFooterHomeButton";
@@ -59,12 +63,17 @@ const BRAND = {
   inputBg: "#F8FBFF",
 };
 
-const ADMIN_THREADS_POLL_MS = 5000;
+const FALLBACK_REFRESH_MS = 20 * 60 * 1000;
+const SOCKET_THREAD_REFRESH_DELAY_MS = 500;
 
 type UiImage = {
   uri: string;
   name: string;
   type: string;
+};
+
+type CableSubscription = {
+  unsubscribe: () => void;
 };
 
 function formatThreadTime(iso?: string | null) {
@@ -136,11 +145,18 @@ export default function TextMomAdminScreen() {
   const footerTotalHeight = FOOTER_MIN_HEIGHT + footerPaddingBottom;
 
   const flatListRef = useRef<FlatList<AdminSupportTextMessage>>(null);
-  const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isFetchingThreadsRef = useRef(false);
-  const isFocusedRef = useRef(false);
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
   const selectedThreadIdRef = useRef<number | null>(null);
+  const hasInitializedRef = useRef(false);
+  const socketRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const cableRef = useRef<Cable | null>(null);
+  const inboxSubscriptionRef = useRef<CableSubscription | null>(null);
+  const selectedThreadSubscriptionRef = useRef<CableSubscription | null>(null);
+  const selectedThreadSubscriptionIdRef = useRef<number | null>(null);
+  const selectedThreadSubscribeRunRef = useRef(0);
+  const inboxSubscribeRunRef = useRef(0);
 
   const [threads, setThreads] = useState<AdminSupportTextThreadSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -181,6 +197,80 @@ export default function TextMomAdminScreen() {
     setPreviewUri(null);
   }, []);
 
+  const mergeThreadIntoInbox = useCallback(
+    (incomingThread: AdminSupportTextThreadSummary) => {
+      setThreads((prev) => {
+        const withoutIncoming = prev.filter((t) => t.id !== incomingThread.id);
+
+        return [incomingThread, ...withoutIncoming].sort((a, b) => {
+          const aTime = new Date(a.last_message_at || 0).getTime();
+          const bTime = new Date(b.last_message_at || 0).getTime();
+          return bTime - aTime;
+        });
+      });
+
+      if (selectedThreadIdRef.current === incomingThread.id) {
+        setSelectedThread(incomingThread);
+      }
+    },
+    []
+  );
+
+  const appendAdminLiveMessage = useCallback(
+    (
+      incomingMessage: AdminSupportTextMessage,
+      incomingThread?: AdminSupportTextThreadSummary | null
+    ) => {
+      if (incomingThread) {
+        mergeThreadIntoInbox(incomingThread);
+
+        if (selectedThreadIdRef.current === incomingThread.id) {
+          setSelectedThread(incomingThread);
+        }
+      }
+
+      setThreadMessages((prev) => mergeMessagesById([...prev, incomingMessage]));
+    },
+    [mergeThreadIntoInbox]
+  );
+
+  const ensureCable = useCallback(async () => {
+    if (!cableRef.current) {
+      cableRef.current = await buildCableConsumer();
+    }
+
+    return cableRef.current;
+  }, []);
+
+  const cleanupInboxSubscription = useCallback(() => {
+    inboxSubscribeRunRef.current += 1;
+
+    if (inboxSubscriptionRef.current) {
+      try {
+        inboxSubscriptionRef.current.unsubscribe();
+      } catch (error) {
+        console.warn("[AdminInbox] unsubscribe failed", error);
+      } finally {
+        inboxSubscriptionRef.current = null;
+      }
+    }
+  }, []);
+
+  const cleanupSelectedThreadSubscription = useCallback(() => {
+    selectedThreadSubscribeRunRef.current += 1;
+
+    if (selectedThreadSubscriptionRef.current) {
+      try {
+        selectedThreadSubscriptionRef.current.unsubscribe();
+      } catch (error) {
+        console.warn("[AdminThread] unsubscribe failed", error);
+      } finally {
+        selectedThreadSubscriptionRef.current = null;
+        selectedThreadSubscriptionIdRef.current = null;
+      }
+    }
+  }, []);
+
   const loadThreads = useCallback(
     async (mode: "initial" | "refresh" | "silent" = "initial") => {
       if (isFetchingThreadsRef.current) return;
@@ -217,65 +307,211 @@ export default function TextMomAdminScreen() {
     []
   );
 
-  const loadSelectedThread = useCallback(async (threadId: number) => {
-    try {
-      setThreadLoading(true);
-      setThreadError(null);
+  const loadSelectedThread = useCallback(
+    async (threadId: number, options?: { silent?: boolean }) => {
+      const silent = options?.silent ?? false;
 
-      const [threadRow, messageRows] = await Promise.all([
-        fetchAdminSupportThread(threadId),
-        fetchAdminSupportMessages(threadId),
-      ]);
+      try {
+        if (!silent) setThreadLoading(true);
+        setThreadError(null);
 
-      setSelectedThread(threadRow);
-      selectedThreadIdRef.current = threadRow.id;
-      setThreadMessages(mergeMessagesById(messageRows));
-    } catch (e: any) {
-      setThreadError(e?.message || "Unable to load support thread.");
-    } finally {
-      setThreadLoading(false);
+        const [threadRow, messageRows] = await Promise.all([
+          fetchAdminSupportThread(threadId),
+          fetchAdminSupportMessages(threadId),
+        ]);
+
+        setSelectedThread(threadRow);
+        selectedThreadIdRef.current = threadRow.id;
+        setThreadMessages(mergeMessagesById(messageRows));
+
+        mergeThreadIntoInbox(threadRow);
+
+        return true;
+      } catch (e: any) {
+        if (!silent) {
+          setThreadError(e?.message || "Unable to load support thread.");
+        }
+        return false;
+      } finally {
+        if (!silent) setThreadLoading(false);
+      }
+    },
+    [mergeThreadIntoInbox]
+  );
+
+  const scheduleSelectedThreadRefresh = useCallback((threadId: number) => {
+    if (socketRefreshTimerRef.current) {
+      clearTimeout(socketRefreshTimerRef.current);
     }
-  }, []);
 
-  const refreshSelectedThreadMessages = useCallback(async () => {
-    const activeThreadId = selectedThreadIdRef.current;
-    if (!activeThreadId) return;
+    socketRefreshTimerRef.current = setTimeout(() => {
+      if (selectedThreadIdRef.current !== threadId) return;
+      void loadSelectedThread(threadId, { silent: true });
+    }, SOCKET_THREAD_REFRESH_DELAY_MS);
+  }, [loadSelectedThread]);
+
+  const refreshAdminSafely = useCallback(async () => {
+    try {
+      await loadThreads("silent");
+
+      if (selectedThreadIdRef.current) {
+        await loadSelectedThread(selectedThreadIdRef.current, { silent: true });
+      }
+    } catch (error) {
+      console.warn("Admin fallback refresh failed", error);
+    }
+  }, [loadThreads, loadSelectedThread]);
+
+  const subscribeAdminInbox = useCallback(async () => {
+    if (inboxSubscriptionRef.current) return;
+
+    const runId = ++inboxSubscribeRunRef.current;
 
     try {
-      const [threadRow, messageRows] = await Promise.all([
-        fetchAdminSupportThread(activeThreadId),
-        fetchAdminSupportMessages(activeThreadId),
-      ]);
+      const cable = await ensureCable();
 
-      setSelectedThread(threadRow);
-      setThreadMessages((prev) => mergeMessagesById([...prev, ...messageRows]));
+      if (inboxSubscribeRunRef.current !== runId) return;
+      if (inboxSubscriptionRef.current) return;
 
-      setThreads((prev) =>
-        prev.map((row) => (row.id === threadRow.id ? threadRow : row))
-      );
-    } catch {
-      // silent poll failure
+      inboxSubscriptionRef.current = subscribeToSupportInbox({
+        consumer: cable,
+        onConnected: () => {
+          console.log("[Cable] Connected to support admin inbox");
+          void loadThreads("silent");
+        },
+        onThreadUpdated: ({ thread }) => {
+          mergeThreadIntoInbox(thread);
+        },
+        onError: (error) => {
+          console.warn("[AdminInbox] subscription error", error);
+        },
+      });
+    } catch (error) {
+      if (inboxSubscribeRunRef.current === runId) {
+        console.warn("[AdminInbox] subscribe failed", error);
+      }
     }
-  }, []);
+  }, [ensureCable, loadThreads, mergeThreadIntoInbox]);
+
+  const subscribeSelectedThread = useCallback(
+    async (threadId: number) => {
+      if (
+        selectedThreadSubscriptionRef.current &&
+        selectedThreadSubscriptionIdRef.current === threadId
+      ) {
+        return;
+      }
+
+      const runId = ++selectedThreadSubscribeRunRef.current;
+
+      try {
+        const cable = await ensureCable();
+
+        if (selectedThreadSubscribeRunRef.current !== runId) return;
+
+        if (
+          selectedThreadSubscriptionRef.current &&
+          selectedThreadSubscriptionIdRef.current === threadId
+        ) {
+          return;
+        }
+
+        if (selectedThreadSubscriptionRef.current) {
+          try {
+            selectedThreadSubscriptionRef.current.unsubscribe();
+          } catch (error) {
+            console.warn("[AdminThread] unsubscribe failed", error);
+          } finally {
+            selectedThreadSubscriptionRef.current = null;
+            selectedThreadSubscriptionIdRef.current = null;
+          }
+        }
+
+        if (selectedThreadSubscribeRunRef.current !== runId) return;
+
+        selectedThreadSubscriptionRef.current = subscribeToSupportTextThread({
+          consumer: cable,
+          threadId,
+          onConnected: () => {
+            console.log("[Cable] Connected to thread", threadId);
+            void loadSelectedThread(threadId, { silent: true });
+          },
+          onMessageCreated: ({ message, thread }) => {
+            if (selectedThreadIdRef.current !== threadId) return;
+
+            appendAdminLiveMessage(message, thread);
+
+            const isIncomingUserMessage =
+              message?.direction === "outbound_to_support";
+
+            if (isIncomingUserMessage) {
+              scheduleSelectedThreadRefresh(threadId);
+            }
+          },
+          onError: (error) => {
+            console.warn("[AdminThread] subscription error", error);
+          },
+        });
+
+        selectedThreadSubscriptionIdRef.current = threadId;
+      } catch (error) {
+        if (selectedThreadSubscribeRunRef.current === runId) {
+          console.warn("[AdminThread] subscribe failed", error);
+        }
+      }
+    },
+    [appendAdminLiveMessage, ensureCable, loadSelectedThread, scheduleSelectedThreadRefresh]
+  );
 
   const handleSelectThread = useCallback(
     async (threadId: number) => {
+      if (selectedThreadIdRef.current === threadId && selectedThread) {
+        await subscribeSelectedThread(threadId);
+        return;
+      }
+
+      setSelectedThread({
+        id: threadId,
+      } as AdminSupportTextThreadSummary);
+      selectedThreadIdRef.current = threadId;
+
+      setThreads((prev) =>
+        prev.map((t) =>
+          t.id === threadId ? { ...t, support_unread: false } : t
+        )
+      );
+
+      setThreadLoading(true);
+      setThreadError(null);
       setDraft("");
       setPickedImages([]);
       setThreadMessages([]);
-      await loadSelectedThread(threadId);
+
+      const loaded = await loadSelectedThread(threadId);
+
+      if (loaded) {
+        await subscribeSelectedThread(threadId);
+      }
     },
-    [loadSelectedThread]
+    [loadSelectedThread, selectedThread, subscribeSelectedThread]
   );
 
   const handleBackToInbox = useCallback(() => {
+    cleanupSelectedThreadSubscription();
+
+    if (socketRefreshTimerRef.current) {
+      clearTimeout(socketRefreshTimerRef.current);
+      socketRefreshTimerRef.current = null;
+    }
+
     setSelectedThread(null);
     selectedThreadIdRef.current = null;
     setThreadMessages([]);
     setThreadError(null);
+    setThreadLoading(false);
     setDraft("");
     setPickedImages([]);
-  }, []);
+  }, [cleanupSelectedThreadSubscription]);
 
   const pickImages = useCallback(async () => {
     if (pickedImages.length >= 4) {
@@ -328,87 +564,68 @@ export default function TextMomAdminScreen() {
       );
 
       setThreadMessages((prev) => mergeMessagesById([...prev, created]));
-
       await loadThreads("silent");
-      await refreshSelectedThreadMessages();
     } catch (e: any) {
       Alert.alert("Send failed", e?.message || "Unable to send reply.");
     } finally {
       setSending(false);
     }
-  }, [draft, pickedImages, sending, loadThreads, refreshSelectedThreadMessages]);
-
-  const stopPolling = useCallback(() => {
-    if (pollingIntervalRef.current) {
-      clearInterval(pollingIntervalRef.current);
-      pollingIntervalRef.current = null;
-    }
-  }, []);
-
-  const startPolling = useCallback(() => {
-    if (pollingIntervalRef.current) return;
-
-    pollingIntervalRef.current = setInterval(() => {
-      const appIsActive = appStateRef.current === "active";
-      if (!isFocusedRef.current || !appIsActive) return;
-
-      void loadThreads("silent");
-
-      if (selectedThreadIdRef.current) {
-        void refreshSelectedThreadMessages();
-      }
-    }, ADMIN_THREADS_POLL_MS);
-  }, [loadThreads, refreshSelectedThreadMessages]);
+  }, [draft, pickedImages, sending, loadThreads]);
 
   useEffect(() => {
+    if (hasInitializedRef.current) return;
+    hasInitializedRef.current = true;
+
     void loadThreads("initial");
-  }, [loadThreads]);
+    void subscribeAdminInbox();
+  }, [loadThreads, subscribeAdminInbox]);
 
   useFocusEffect(
     useCallback(() => {
-      isFocusedRef.current = true;
       void loadThreads("silent");
 
       if (selectedThreadIdRef.current) {
-        void refreshSelectedThreadMessages();
+        void subscribeSelectedThread(selectedThreadIdRef.current);
       }
 
-      startPolling();
-
-      return () => {
-        isFocusedRef.current = false;
-        stopPolling();
-      };
-    }, [loadThreads, refreshSelectedThreadMessages, startPolling, stopPolling])
+      return undefined;
+    }, [loadThreads, subscribeSelectedThread])
   );
 
   useEffect(() => {
-    const subscription = AppState.addEventListener("change", (nextAppState) => {
-      const wasBackgrounded =
-        appStateRef.current === "inactive" || appStateRef.current === "background";
+    const interval = setInterval(() => {
+      void loadThreads("silent");
 
-      appStateRef.current = nextAppState;
+      if (selectedThreadIdRef.current) {
+        void loadSelectedThread(selectedThreadIdRef.current, { silent: true });
+      }
+    }, FALLBACK_REFRESH_MS);
 
-      if (nextAppState === "active" && isFocusedRef.current && wasBackgrounded) {
-        void loadThreads("silent");
+    return () => clearInterval(interval);
+  }, [loadSelectedThread, loadThreads]);
 
-        if (selectedThreadIdRef.current) {
-          void refreshSelectedThreadMessages();
+  useEffect(() => {
+    const subscription = AppState.addEventListener(
+      "change",
+      (nextState: AppStateStatus) => {
+        const wasBackgrounded =
+          appStateRef.current === "inactive" || appStateRef.current === "background";
+
+        appStateRef.current = nextState;
+
+        if (nextState === "active" && wasBackgrounded) {
+          void loadThreads("silent");
+
+          if (selectedThreadIdRef.current) {
+            void loadSelectedThread(selectedThreadIdRef.current, { silent: true });
+            void subscribeSelectedThread(selectedThreadIdRef.current);
+          }
         }
-
-        startPolling();
       }
+    );
 
-      if (nextAppState !== "active") {
-        stopPolling();
-      }
-    });
-
-    return () => {
-      subscription.remove();
-      stopPolling();
-    };
-  }, [loadThreads, refreshSelectedThreadMessages, startPolling, stopPolling]);
+    return () => subscription.remove();
+  }, [loadSelectedThread, loadThreads, subscribeSelectedThread]);
 
   useEffect(() => {
     if (!threadMessages.length) return;
@@ -419,6 +636,28 @@ export default function TextMomAdminScreen() {
 
     return () => clearTimeout(timer);
   }, [threadMessages]);
+
+  useEffect(() => {
+    return () => {
+      cleanupInboxSubscription();
+      cleanupSelectedThreadSubscription();
+
+      if (socketRefreshTimerRef.current) {
+        clearTimeout(socketRefreshTimerRef.current);
+        socketRefreshTimerRef.current = null;
+      }
+
+      if (cableRef.current) {
+        try {
+          cableRef.current.disconnect();
+        } catch (error) {
+          console.warn("[Cable] disconnect failed", error);
+        } finally {
+          cableRef.current = null;
+        }
+      }
+    };
+  }, [cleanupInboxSubscription, cleanupSelectedThreadSubscription]);
 
   const renderMessage = ({ item }: { item: AdminSupportTextMessage }) => {
     const mine = item.direction === "inbound_from_support";
@@ -431,8 +670,8 @@ export default function TextMomAdminScreen() {
           system
             ? styles.messageRowSystem
             : mine
-            ? styles.messageRowMine
-            : styles.messageRowTheirs,
+              ? styles.messageRowMine
+              : styles.messageRowTheirs,
         ]}
       >
         <View
@@ -441,8 +680,8 @@ export default function TextMomAdminScreen() {
             system
               ? styles.messageBubbleSystem
               : mine
-              ? styles.messageBubbleMine
-              : styles.messageBubbleTheirs,
+                ? styles.messageBubbleMine
+                : styles.messageBubbleTheirs,
           ]}
         >
           {system ? (
@@ -465,8 +704,8 @@ export default function TextMomAdminScreen() {
                 system
                   ? styles.messageTextSystem
                   : mine
-                  ? styles.messageTextMine
-                  : styles.messageTextTheirs,
+                    ? styles.messageTextMine
+                    : styles.messageTextTheirs,
               ]}
             >
               {item.body}
@@ -501,15 +740,15 @@ export default function TextMomAdminScreen() {
                 system
                   ? styles.messageMetaSystem
                   : mine
-                  ? styles.messageMetaMine
-                  : styles.messageMetaTheirs,
+                    ? styles.messageMetaMine
+                    : styles.messageMetaTheirs,
               ]}
             >
               {system
                 ? "System"
                 : mine
-                ? item.author_agent_name || "Support"
-                : "User"}
+                  ? item.author_agent_name || "Support"
+                  : "User"}
               {item.created_at ? ` • ${formatMetaTime(item.created_at)}` : ""}
             </Text>
           </View>
@@ -736,17 +975,7 @@ export default function TextMomAdminScreen() {
                 </View>
               </View>
 
-              {threadLoading ? (
-                <View style={styles.loadingWrapThread}>
-                  <View style={styles.loadingOrb}>
-                    <ActivityIndicator size="large" color={BRAND.blue} />
-                  </View>
-                  <Text style={styles.loadingTitle}>Opening thread…</Text>
-                  <Text style={styles.loadingText}>
-                    Getting the latest messages ready.
-                  </Text>
-                </View>
-              ) : threadError ? (
+              {threadError ? (
                 <View style={styles.errorCard}>
                   <Text style={styles.errorTitle}>Couldn’t load thread</Text>
                   <Text style={styles.errorBody}>{threadError}</Text>
@@ -767,18 +996,32 @@ export default function TextMomAdminScreen() {
                 </View>
               ) : (
                 <>
-                  <FlatList
-                    ref={flatListRef}
-                    data={threadMessages}
-                    keyExtractor={(item) => `msg-${item.id}`}
-                    renderItem={renderMessage}
-                    contentContainerStyle={styles.messagesList}
-                    showsVerticalScrollIndicator={false}
-                    keyboardShouldPersistTaps="handled"
-                    style={{ flex: 1 }}
-                  />
+                  <View style={styles.threadMessagesWrap}>
+                    {threadLoading ? (
+                      <View style={styles.loadingInlineWrap}>
+                        <View style={styles.loadingOrb}>
+                          <ActivityIndicator size="large" color={BRAND.blue} />
+                        </View>
+                        <Text style={styles.loadingTitle}>Opening thread…</Text>
+                        <Text style={styles.loadingText}>
+                          Getting the latest messages ready.
+                        </Text>
+                      </View>
+                    ) : (
+                      <FlatList
+                        ref={flatListRef}
+                        data={threadMessages}
+                        keyExtractor={(item) => `msg-${item.id}`}
+                        renderItem={renderMessage}
+                        contentContainerStyle={styles.messagesList}
+                        showsVerticalScrollIndicator={false}
+                        keyboardShouldPersistTaps="handled"
+                        style={{ flex: 1 }}
+                      />
+                    )}
+                  </View>
 
-                  {!!pickedImages.length && (
+                  {!threadLoading && !!pickedImages.length && (
                     <View style={styles.pickedImagesCard}>
                       <View style={styles.pickedImagesHeader}>
                         <Text style={styles.pickedImagesTitle}>
@@ -821,49 +1064,51 @@ export default function TextMomAdminScreen() {
                     </View>
                   )}
 
-                  <View style={styles.composerOuter}>
-                    <View style={styles.composerWrap}>
-                      <Pressable
-                        onPress={pickImages}
-                        style={({ pressed }) => [
-                          styles.attachBtn,
-                          pressed && styles.attachBtnPressed,
-                        ]}
-                      >
-                        <Ionicons
-                          name="image-outline"
-                          size={20}
-                          color={BRAND.blue}
+                  {!threadLoading && (
+                    <View style={styles.composerOuter}>
+                      <View style={styles.composerWrap}>
+                        <Pressable
+                          onPress={pickImages}
+                          style={({ pressed }) => [
+                            styles.attachBtn,
+                            pressed && styles.attachBtnPressed,
+                          ]}
+                        >
+                          <Ionicons
+                            name="image-outline"
+                            size={20}
+                            color={BRAND.blue}
+                          />
+                        </Pressable>
+
+                        <TextInput
+                          value={draft}
+                          onChangeText={setDraft}
+                          placeholder="Reply as support..."
+                          placeholderTextColor={BRAND.mutedSoft}
+                          multiline
+                          style={styles.input}
+                          textAlignVertical="top"
                         />
-                      </Pressable>
 
-                      <TextInput
-                        value={draft}
-                        onChangeText={setDraft}
-                        placeholder="Reply as support..."
-                        placeholderTextColor={BRAND.mutedSoft}
-                        multiline
-                        style={styles.input}
-                        textAlignVertical="top"
-                      />
-
-                      <Pressable
-                        onPress={() => void handleSend()}
-                        style={({ pressed }) => [
-                          styles.sendBtn,
-                          sendDisabled && styles.sendBtnDisabled,
-                          pressed && !sendDisabled && styles.sendBtnPressed,
-                        ]}
-                        disabled={sendDisabled}
-                      >
-                        {sending ? (
-                          <ActivityIndicator size="small" color="#FFF" />
-                        ) : (
-                          <Ionicons name="arrow-up" size={18} color="#FFF" />
-                        )}
-                      </Pressable>
+                        <Pressable
+                          onPress={() => void handleSend()}
+                          style={({ pressed }) => [
+                            styles.sendBtn,
+                            sendDisabled && styles.sendBtnDisabled,
+                            pressed && !sendDisabled && styles.sendBtnPressed,
+                          ]}
+                          disabled={sendDisabled}
+                        >
+                          {sending ? (
+                            <ActivityIndicator size="small" color="#FFF" />
+                          ) : (
+                            <Ionicons name="arrow-up" size={18} color="#FFF" />
+                          )}
+                        </Pressable>
+                      </View>
                     </View>
-                  </View>
+                  )}
                 </>
               )}
             </>
@@ -998,13 +1243,6 @@ const styles = StyleSheet.create({
     gap: 10,
   },
 
-  loadingWrapThread: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    paddingHorizontal: 24,
-  },
-
   loadingOrb: {
     width: 76,
     height: 76,
@@ -1030,6 +1268,19 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: "center",
     lineHeight: 20,
+  },
+
+  loadingInlineWrap: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 24,
+    paddingBottom: 20,
+  },
+
+  threadMessagesWrap: {
+    flex: 1,
+    minHeight: 0,
   },
 
   errorCard: {

@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import type { Cable } from "@rails/actioncable";
 import * as ImagePicker from "expo-image-picker";
 import { useFocusEffect, useRouter } from "expo-router";
 import * as SecureStore from "expo-secure-store";
@@ -6,6 +7,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   ActivityIndicator,
   Alert,
+  AppState,
   FlatList,
   Image,
   KeyboardAvoidingView,
@@ -16,6 +18,7 @@ import {
   TextInput,
   View,
   useWindowDimensions,
+  type AppStateStatus,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { FONT } from "../../../src/theme";
@@ -27,11 +30,14 @@ import {
   sendSupportTextMessage,
   type SupportTextThreadSummary,
 } from "../../services/api/supportTextThreads";
+import { buildCableConsumer } from "../../services/cable/createCable";
+import { subscribeToSupportTextThread } from "../../services/cable/supportTextThreadSubscription";
 import ImagePreviewModal from "../AskMom/components/ImagePreviewModal";
 import DebugDropdown from "./components/DebugDropdown";
 import HistoryDrawer from "./components/HistoryDrawer";
 
 const SHOW_DEBUG_DROPDOWN = false;
+const FALLBACK_REFRESH_MS = 20 * 60 * 1000;
 
 const BRAND = {
   pageBg: "#08101D",
@@ -103,6 +109,10 @@ type SupportTextRenderableMessage = SupportTextMessage & {
   dividerLabel?: string;
 };
 
+type CableSubscription = {
+  unsubscribe: () => void;
+};
+
 function formatMetaTime(iso?: string | null) {
   if (!iso) return "";
 
@@ -170,7 +180,6 @@ export default function TextMomUserScreen() {
   const user = auth?.user;
 
   const flatListRef = useRef<FlatList<SupportTextRenderableMessage>>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const threadIdRef = useRef<number | null>(null);
   const threadRef = useRef<SupportTextThread | null>(null);
   const messagesRef = useRef<SupportTextRenderableMessage[]>([]);
@@ -178,6 +187,13 @@ export default function TextMomUserScreen() {
   const introEligibleRef = useRef(false);
   const bootstrapRunIdRef = useRef(0);
   const sentInCurrentSessionRef = useRef(false);
+  const cableRef = useRef<Cable | null>(null);
+  const threadSubscriptionRef = useRef<CableSubscription | null>(null);
+  const appStateRef = useRef<AppStateStatus>(AppState.currentState);
+  const showLastThreadDividerRef = useRef(false);
+  const hasBootstrappedRef = useRef(false);
+  const subscriptionRunIdRef = useRef(0);
+  const refreshAfterSocketTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [threads, setThreads] = useState<SupportTextThreadSummary[]>([]);
@@ -225,6 +241,10 @@ export default function TextMomUserScreen() {
   }, [messages]);
 
   useEffect(() => {
+    showLastThreadDividerRef.current = showLastThreadDivider;
+  }, [showLastThreadDivider]);
+
+  useEffect(() => {
     if (!messages.length) return;
 
     const timer = setTimeout(() => {
@@ -233,6 +253,15 @@ export default function TextMomUserScreen() {
 
     return () => clearTimeout(timer);
   }, [messages]);
+
+  useEffect(() => {
+    return () => {
+      if (refreshAfterSocketTimerRef.current) {
+        clearTimeout(refreshAfterSocketTimerRef.current);
+        refreshAfterSocketTimerRef.current = null;
+      }
+    };
+  }, []);
 
   const buildLocalWelcomeMessage = (): SupportTextRenderableMessage => {
     const firstName =
@@ -330,7 +359,7 @@ export default function TextMomUserScreen() {
       setMessages([buildLocalWelcomeMessage()]);
       setShowLastThreadDivider(false);
     },
-    [getLiveRecentUiCopy, user]
+    [getLiveRecentUiCopy]
   );
 
   const refreshMessages = useCallback(
@@ -342,13 +371,22 @@ export default function TextMomUserScreen() {
         const threadId = explicitThreadId || threadIdRef.current;
         if (!threadId) return;
 
+        console.log("[TextMomUser] refreshMessages starting", { threadId, silent });
+
         const path = `/v1/support_text_messages?thread_id=${threadId}`;
         const response = await getJson(path, token);
+
+        console.log("[TextMomUser] refreshMessages response", {
+          ok: response?.ok,
+          threadId,
+          count: response?.json?.messages?.length,
+        });
 
         if (!response?.ok) return;
 
         const nextMessages = response.json?.messages || [];
-        const includeDivider = modeRef.current === "recent" || showLastThreadDivider;
+        const includeDivider =
+          modeRef.current === "recent" || showLastThreadDividerRef.current;
         const currentThread = threadRef.current;
         const existingRows = messagesRef.current;
         const hasExistingRealMessages = hasRealMessages(existingRows);
@@ -374,13 +412,158 @@ export default function TextMomUserScreen() {
           includeLastThreadDivider: includeDivider,
           preserveExistingIfEmpty: true,
         });
-      } catch {
+      } catch (error) {
+        console.log("[TextMomUser] refreshMessages failed", error);
         if (!silent) {
           setLastMessage("Unable to refresh messages right now.");
         }
       }
     },
-    [applyMessages, showLastThreadDivider]
+    [applyMessages]
+  );
+
+  const refreshThreadSafely = useCallback(async () => {
+    try {
+      await refreshMessages(true);
+    } catch (error) {
+      console.warn("User thread fallback refresh failed", error);
+    }
+  }, [refreshMessages]);
+
+  const clearThreadSubscription = useCallback(() => {
+    subscriptionRunIdRef.current += 1;
+
+    if (threadSubscriptionRef.current) {
+      try {
+        threadSubscriptionRef.current.unsubscribe();
+      } catch (error) {
+        console.log("[TextMomUser] thread unsubscribe failed", error);
+      } finally {
+        threadSubscriptionRef.current = null;
+      }
+    }
+  }, []);
+
+  const appendLiveMessage = useCallback(
+    (
+      incomingMessage: SupportTextMessage,
+      incomingThread?: SupportTextThread | null
+    ) => {
+      if (incomingThread) {
+        setThread(incomingThread);
+        threadRef.current = incomingThread;
+      }
+
+      introEligibleRef.current = false;
+
+      setMessages((prev) => {
+        const cleaned = prev.filter(
+          (m) => m.id !== LOCAL_WELCOME_ID && m.id !== LAST_THREAD_DIVIDER_ID
+        );
+
+        const existingIndex = cleaned.findIndex((m) => m.id === incomingMessage.id);
+
+        const normalizedIncoming: SupportTextRenderableMessage = {
+          ...incomingMessage,
+          images: Array.isArray(incomingMessage.images) ? incomingMessage.images : [],
+        };
+
+        const next =
+          existingIndex >= 0
+            ? cleaned.map((m) => (m.id === incomingMessage.id ? { ...m, ...normalizedIncoming } : m))
+            : [...cleaned, normalizedIncoming];
+
+        return next.sort((a, b) => {
+          const aTime = new Date(a.created_at).getTime();
+          const bTime = new Date(b.created_at).getTime();
+
+          if (aTime !== bTime) return aTime - bTime;
+          return a.id - b.id;
+        });
+      });
+
+      setShowLastThreadDivider(false);
+    },
+    []
+  );
+
+  const scheduleRefreshForIncomingSupportMessage = useCallback((threadId?: number | null) => {
+    if (!threadId) return;
+
+    if (refreshAfterSocketTimerRef.current) {
+      clearTimeout(refreshAfterSocketTimerRef.current);
+    }
+
+    console.log("[TextMomUser] scheduling refresh for incoming support message", { threadId });
+
+    refreshAfterSocketTimerRef.current = setTimeout(() => {
+      console.log("[TextMomUser] executing scheduled refresh", { threadId });
+      void refreshMessages(true, threadId);
+    }, 500);
+  }, [refreshMessages]);
+
+  const subscribeToActiveThread = useCallback(
+    async (activeThreadId?: number | null) => {
+      const threadId = activeThreadId || threadIdRef.current;
+      if (!threadId) return;
+
+      const myRunId = ++subscriptionRunIdRef.current;
+
+      try {
+        if (!cableRef.current) {
+          cableRef.current = await buildCableConsumer();
+        }
+
+        if (subscriptionRunIdRef.current !== myRunId) return;
+
+        if (threadSubscriptionRef.current) {
+          try {
+            threadSubscriptionRef.current.unsubscribe();
+          } catch (error) {
+            console.log("[TextMomUser] thread unsubscribe failed", error);
+          } finally {
+            threadSubscriptionRef.current = null;
+          }
+        }
+
+        if (subscriptionRunIdRef.current !== myRunId) return;
+
+        threadSubscriptionRef.current = subscribeToSupportTextThread({
+          consumer: cableRef.current,
+          threadId,
+          onMessageCreated: ({ message, thread }) => {
+            console.log("[TextMomUser] socket message received", {
+              id: message?.id,
+              direction: message?.direction,
+              imageCount: Array.isArray(message?.images) ? message.images.length : "missing",
+            });
+
+            appendLiveMessage(message, thread);
+
+            const isIncomingSupportMessage = message?.direction === "inbound_from_support";
+
+            if (isIncomingSupportMessage) {
+              scheduleRefreshForIncomingSupportMessage(thread?.id || threadId);
+            }
+          },
+          onConnected: () => {
+            console.log("[TextMomUser] thread subscription connected", threadId);
+            void refreshThreadSafely();
+          },
+          onDisconnected: () => {
+            console.log("[TextMomUser] thread subscription disconnected", threadId);
+          },
+          onError: (error) => {
+            console.log("[TextMomUser] thread subscription error", error);
+          },
+        });
+      } catch (error) {
+        if (subscriptionRunIdRef.current === myRunId) {
+          console.log("[TextMomUser] subscribeToActiveThread failed", error);
+        }
+      }
+    },
+    [appendLiveMessage, refreshThreadSafely, scheduleRefreshForIncomingSupportMessage]
   );
 
   const bootstrap = useCallback(async () => {
@@ -398,6 +581,7 @@ export default function TextMomUserScreen() {
       setThread(null);
       threadRef.current = null;
       threadIdRef.current = null;
+      clearThreadSubscription();
 
       const token = await SecureStore.getItemAsync("auth_token");
       if (!token) {
@@ -451,6 +635,7 @@ export default function TextMomUserScreen() {
             tone: "recent",
           });
 
+          await subscribeToActiveThread(detail.thread.id);
           return;
         }
 
@@ -460,6 +645,7 @@ export default function TextMomUserScreen() {
         threadIdRef.current = null;
         introEligibleRef.current = true;
         setStatusBanner(null);
+        clearThreadSubscription();
 
         applyMessages([], {
           allowFallback: true,
@@ -471,6 +657,7 @@ export default function TextMomUserScreen() {
 
       modeRef.current = "fresh";
       introEligibleRef.current = true;
+      clearThreadSubscription();
 
       applyMessages([], {
         allowFallback: true,
@@ -485,30 +672,72 @@ export default function TextMomUserScreen() {
         setIsBooting(false);
       }
     }
-  }, [applyMessages, getLiveRecentUiCopy]);
-
-  useEffect(() => {
-    void bootstrap();
-  }, [bootstrap]);
+  }, [
+    applyMessages,
+    clearThreadSubscription,
+    getLiveRecentUiCopy,
+    subscribeToActiveThread,
+  ]);
 
   useFocusEffect(
     useCallback(() => {
-      void bootstrap();
+      if (!hasBootstrappedRef.current) {
+        hasBootstrappedRef.current = true;
+        void bootstrap();
+      } else {
+        void refreshThreadSafely();
+      }
+
       return undefined;
-    }, [bootstrap])
+    }, [bootstrap, refreshThreadSafely])
   );
 
   useEffect(() => {
-    if (pollRef.current) clearInterval(pollRef.current);
+    const interval = setInterval(() => {
+      void refreshThreadSafely();
+    }, FALLBACK_REFRESH_MS);
 
-    pollRef.current = setInterval(() => {
-      void refreshMessages(true);
-    }, 4000);
+    return () => clearInterval(interval);
+  }, [refreshThreadSafely]);
 
+  useEffect(() => {
+    const subscription = AppState.addEventListener(
+      "change",
+      (nextState: AppStateStatus) => {
+        const wasBackgrounded =
+          appStateRef.current === "inactive" || appStateRef.current === "background";
+
+        appStateRef.current = nextState;
+
+        if (nextState === "active" && wasBackgrounded) {
+          void refreshThreadSafely();
+        }
+      }
+    );
+
+    return () => subscription.remove();
+  }, [refreshThreadSafely]);
+
+  useEffect(() => {
     return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
+      clearThreadSubscription();
+
+      if (refreshAfterSocketTimerRef.current) {
+        clearTimeout(refreshAfterSocketTimerRef.current);
+        refreshAfterSocketTimerRef.current = null;
+      }
+
+      if (cableRef.current) {
+        try {
+          cableRef.current.disconnect();
+        } catch (error) {
+          console.log("[TextMomUser] cable disconnect failed", error);
+        } finally {
+          cableRef.current = null;
+        }
+      }
     };
-  }, [refreshMessages]);
+  }, [clearThreadSubscription]);
 
   const handleSelectThread = async (threadId: number) => {
     try {
@@ -520,6 +749,8 @@ export default function TextMomUserScreen() {
       modeRef.current = "recent";
       introEligibleRef.current = false;
       sentInCurrentSessionRef.current = false;
+
+      clearThreadSubscription();
 
       const detail = await fetchSupportTextThread(threadId);
 
@@ -546,6 +777,8 @@ export default function TextMomUserScreen() {
 
       setDraft("");
       setPickedImages([]);
+
+      await subscribeToActiveThread(detail.thread.id);
 
       setTimeout(() => {
         flatListRef.current?.scrollToEnd({ animated: false });
@@ -646,6 +879,8 @@ export default function TextMomUserScreen() {
         });
 
         setShowLastThreadDivider(false);
+
+        await subscribeToActiveThread(freshThread.id);
       }
 
       setDraft("");
@@ -667,14 +902,7 @@ export default function TextMomUserScreen() {
       });
 
       if (createdMessage) {
-        setMessages((prev) => {
-          const cleaned = prev.filter(
-            (m) => m.id !== LOCAL_WELCOME_ID && m.id !== LAST_THREAD_DIVIDER_ID
-          );
-          const alreadyExists = cleaned.some((m) => m.id === createdMessage.id);
-          if (alreadyExists) return cleaned;
-          return [...cleaned, createdMessage];
-        });
+        appendLiveMessage(createdMessage, threadRef.current);
       }
 
       try {
@@ -690,6 +918,45 @@ export default function TextMomUserScreen() {
     } finally {
       setIsSending(false);
     }
+  };
+
+  const renderStatusBanner = () => {
+    if (!statusBanner) return null;
+
+    return (
+      <View
+        style={[
+          styles.statusBanner,
+          statusBanner.tone === "recent"
+            ? styles.statusBannerRecent
+            : styles.statusBannerFresh,
+        ]}
+      >
+        <View
+          style={[
+            styles.statusBannerIconWrap,
+            statusBanner.tone === "recent"
+              ? styles.statusBannerIconWrapRecent
+              : styles.statusBannerIconWrapFresh,
+          ]}
+        >
+          <Ionicons
+            name={
+              statusBanner.tone === "recent"
+                ? "time-outline"
+                : "chatbubble-ellipses-outline"
+            }
+            size={16}
+            color={statusBanner.tone === "recent" ? "#355E9A" : BRAND.blueDark}
+          />
+        </View>
+
+        <View style={styles.statusBannerTextWrap}>
+          <Text style={styles.statusBannerTitle}>{statusBanner.title}</Text>
+          <Text style={styles.statusBannerBody}>{statusBanner.body}</Text>
+        </View>
+      </View>
+    );
   };
 
   const renderMessage = ({ item }: { item: SupportTextRenderableMessage }) => {
@@ -881,47 +1148,6 @@ export default function TextMomUserScreen() {
             </View>
           </View>
 
-          {!!statusBanner && (
-            <View
-              style={[
-                styles.statusBanner,
-                statusBanner.tone === "recent"
-                  ? styles.statusBannerRecent
-                  : styles.statusBannerFresh,
-              ]}
-            >
-              <View
-                style={[
-                  styles.statusBannerIconWrap,
-                  statusBanner.tone === "recent"
-                    ? styles.statusBannerIconWrapRecent
-                    : styles.statusBannerIconWrapFresh,
-                ]}
-              >
-                <Ionicons
-                  name={
-                    statusBanner.tone === "recent"
-                      ? "time-outline"
-                      : "chatbubble-ellipses-outline"
-                  }
-                  size={16}
-                  color={
-                    statusBanner.tone === "recent" ? "#355E9A" : BRAND.blueDark
-                  }
-                />
-              </View>
-
-              <View style={styles.statusBannerTextWrap}>
-                <Text style={styles.statusBannerTitle}>
-                  {statusBanner.title}
-                </Text>
-                <Text style={styles.statusBannerBody}>
-                  {statusBanner.body}
-                </Text>
-              </View>
-            </View>
-          )}
-
           {!!lastMessage && (
             <View style={styles.noticeCard}>
               <Ionicons
@@ -950,6 +1176,7 @@ export default function TextMomUserScreen() {
                 data={messages}
                 keyExtractor={(item) => String(item.id)}
                 renderItem={renderMessage}
+                ListHeaderComponent={renderStatusBanner}
                 contentContainerStyle={styles.messagesList}
                 showsVerticalScrollIndicator={false}
                 keyboardShouldPersistTaps="handled"
@@ -1170,7 +1397,7 @@ const styles = StyleSheet.create({
   },
 
   statusBanner: {
-    marginBottom: 10,
+    marginBottom: 14,
     paddingHorizontal: 12,
     paddingVertical: 12,
     borderRadius: 16,
