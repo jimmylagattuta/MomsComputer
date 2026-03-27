@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import type { Cable } from "@rails/actioncable";
 import * as ImagePicker from "expo-image-picker";
-import { useFocusEffect, useRouter } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -136,6 +136,12 @@ function mergeMessagesById(
 
 export default function TextMomAdminScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ threadId?: string | string[] }>();
+  const deepLinkThreadIdRaw = Array.isArray(params.threadId)
+    ? params.threadId[0]
+    : params.threadId;
+  const deepLinkThreadId = deepLinkThreadIdRaw ? Number(deepLinkThreadIdRaw) : null;
+
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const isNarrow = width < 380;
@@ -157,6 +163,8 @@ export default function TextMomAdminScreen() {
   const selectedThreadSubscriptionIdRef = useRef<number | null>(null);
   const selectedThreadSubscribeRunRef = useRef(0);
   const inboxSubscribeRunRef = useRef(0);
+  const handledDeepLinkThreadIdRef = useRef<number | null>(null);
+  const deepLinkInProgressRef = useRef(false);
 
   const [threads, setThreads] = useState<AdminSupportTextThreadSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -495,6 +503,32 @@ export default function TextMomAdminScreen() {
     },
     [loadSelectedThread, selectedThread, subscribeSelectedThread]
   );
+
+  useEffect(() => {
+    if (!deepLinkThreadId || !Number.isFinite(deepLinkThreadId)) return;
+    if (loading) return;
+    if (deepLinkInProgressRef.current) return;
+    if (handledDeepLinkThreadIdRef.current === deepLinkThreadId) return;
+
+    if (selectedThreadIdRef.current === deepLinkThreadId) {
+      handledDeepLinkThreadIdRef.current = deepLinkThreadId;
+      return;
+    }
+
+    deepLinkInProgressRef.current = true;
+
+    (async () => {
+      try {
+        console.log("[TextMomAdmin] handling deep link threadId:", deepLinkThreadId);
+        await handleSelectThread(deepLinkThreadId);
+        handledDeepLinkThreadIdRef.current = deepLinkThreadId;
+      } catch (error) {
+        console.log("[TextMomAdmin] deep link open failed", error);
+      } finally {
+        deepLinkInProgressRef.current = false;
+      }
+    })();
+  }, [deepLinkThreadId, handleSelectThread, loading]);
 
   const handleBackToInbox = useCallback(() => {
     cleanupSelectedThreadSubscription();

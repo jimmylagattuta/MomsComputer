@@ -1,7 +1,8 @@
+// app/src/screens/TextMom/TextMomUserScreen.tsx
 import { Ionicons } from "@expo/vector-icons";
 import type { Cable } from "@rails/actioncable";
 import * as ImagePicker from "expo-image-picker";
-import { useFocusEffect, useRouter } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import * as SecureStore from "expo-secure-store";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -174,6 +175,12 @@ function buildLastThreadDivider(
 
 export default function TextMomUserScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ threadId?: string | string[] }>();
+  const deepLinkThreadIdRaw = Array.isArray(params.threadId)
+    ? params.threadId[0]
+    : params.threadId;
+  const deepLinkThreadId = deepLinkThreadIdRaw ? Number(deepLinkThreadIdRaw) : null;
+
   const { width } = useWindowDimensions();
   const isNarrow = width < 380;
   const auth = useAuth() as any;
@@ -194,6 +201,8 @@ export default function TextMomUserScreen() {
   const hasBootstrappedRef = useRef(false);
   const subscriptionRunIdRef = useRef(0);
   const refreshAfterSocketTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handledDeepLinkThreadIdRef = useRef<number | null>(null);
+  const deepLinkInProgressRef = useRef(false);
 
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [threads, setThreads] = useState<SupportTextThreadSummary[]>([]);
@@ -739,59 +748,88 @@ export default function TextMomUserScreen() {
     };
   }, [clearThreadSubscription]);
 
-  const handleSelectThread = async (threadId: number) => {
-    try {
-      setDrawerOpen(false);
-      setIsBooting(true);
-      setLastMessage(null);
-      setMessages([]);
-      setShowLastThreadDivider(false);
-      modeRef.current = "recent";
-      introEligibleRef.current = false;
-      sentInCurrentSessionRef.current = false;
+  const handleSelectThread = useCallback(
+    async (threadId: number) => {
+      try {
+        setDrawerOpen(false);
+        setIsBooting(true);
+        setLastMessage(null);
+        setMessages([]);
+        setShowLastThreadDivider(false);
+        modeRef.current = "recent";
+        introEligibleRef.current = false;
+        sentInCurrentSessionRef.current = false;
 
-      clearThreadSubscription();
+        clearThreadSubscription();
 
-      const detail = await fetchSupportTextThread(threadId);
+        const detail = await fetchSupportTextThread(threadId);
 
-      setThread(detail.thread as SupportTextThread);
-      threadRef.current = detail.thread as SupportTextThread;
-      threadIdRef.current = detail.thread.id;
+        setThread(detail.thread as SupportTextThread);
+        threadRef.current = detail.thread as SupportTextThread;
+        threadIdRef.current = detail.thread.id;
 
-      const nextMessages = (detail.messages || []).filter(
-        (m) => (m as any).visible_to_user !== false
-      ) as SupportTextMessage[];
+        const nextMessages = (detail.messages || []).filter(
+          (m) => (m as any).visible_to_user !== false
+        ) as SupportTextMessage[];
 
-      applyMessages(nextMessages, {
-        allowFallback: false,
-        includeLastThreadDivider: true,
-      });
+        applyMessages(nextMessages, {
+          allowFallback: false,
+          includeLastThreadDivider: true,
+        });
 
-      const recentCopy = getLiveRecentUiCopy(detail.thread as SupportTextThread);
+        const recentCopy = getLiveRecentUiCopy(detail.thread as SupportTextThread);
 
-      setStatusBanner({
-        title: recentCopy.title,
-        body: recentCopy.body,
-        tone: "recent",
-      });
+        setStatusBanner({
+          title: recentCopy.title,
+          body: recentCopy.body,
+          tone: "recent",
+        });
 
-      setDraft("");
-      setPickedImages([]);
+        setDraft("");
+        setPickedImages([]);
 
-      await subscribeToActiveThread(detail.thread.id);
+        await subscribeToActiveThread(detail.thread.id);
 
-      setTimeout(() => {
-        flatListRef.current?.scrollToEnd({ animated: false });
-      }, 50);
-    } catch (e: any) {
-      Alert.alert(
-        "Couldn’t load that thread",
-        e?.message ? String(e.message) : "Please try again."
-      );
-    } finally {
-      setIsBooting(false);
+        setTimeout(() => {
+          flatListRef.current?.scrollToEnd({ animated: false });
+        }, 50);
+      } catch (e: any) {
+        Alert.alert(
+          "Couldn’t load that thread",
+          e?.message ? String(e.message) : "Please try again."
+        );
+      } finally {
+        setIsBooting(false);
+      }
+    },
+    [applyMessages, clearThreadSubscription, getLiveRecentUiCopy, subscribeToActiveThread]
+  );
+
+  useEffect(() => {
+    if (!deepLinkThreadId || !Number.isFinite(deepLinkThreadId)) return;
+    if (isBooting) return;
+    if (deepLinkInProgressRef.current) return;
+    if (handledDeepLinkThreadIdRef.current === deepLinkThreadId) return;
+
+    if (threadIdRef.current === deepLinkThreadId) {
+      handledDeepLinkThreadIdRef.current = deepLinkThreadId;
+      return;
     }
-  };
+
+    deepLinkInProgressRef.current = true;
+
+    (async () => {
+      try {
+        console.log("[TextMomUser] handling deep link threadId:", deepLinkThreadId);
+        await handleSelectThread(deepLinkThreadId);
+        handledDeepLinkThreadIdRef.current = deepLinkThreadId;
+      } catch (error) {
+        console.log("[TextMomUser] deep link open failed", error);
+      } finally {
+        deepLinkInProgressRef.current = false;
+      }
+    })();
+  }, [deepLinkThreadId, handleSelectThread, isBooting]);
 
   const pickImages = async () => {
     if (pickedImages.length >= 4) {
