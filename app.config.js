@@ -1,4 +1,3 @@
-// app.config.js
 export default {
   expo: {
     name: "moms-computer",
@@ -21,6 +20,7 @@ export default {
 
     android: {
       package: "com.momscomputer.app",
+      googleServicesFile: "./google-services.json",
       adaptiveIcon: {
         foregroundImage: "./assets/images/android-icon-foreground-v3.png",
         backgroundColor: "#E6F4FE",
@@ -52,6 +52,8 @@ export default {
       ],
       "expo-secure-store",
       "expo-font",
+      "expo-notifications",
+      "expo-dev-client",
     ],
 
     experiments: {

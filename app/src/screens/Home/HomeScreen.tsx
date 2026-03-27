@@ -1,4 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
+import * as Application from "expo-application";
+import * as Device from "expo-device";
+import * as Notifications from "expo-notifications";
 import { useRouter } from "expo-router";
 import * as SecureStore from "expo-secure-store";
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -19,6 +22,7 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { FONT } from "../../../src/theme";
 import { useAuth } from "../../auth/AuthProvider";
 import { postJson } from "../../services/api/client";
+import { registerForPushNotificationsAsync } from "../../services/notifications";
 import { rcIdentifyUser, rcLogoutUser } from "../../subscriptions/rcClient";
 import { useSubscription } from "../../subscriptions/useSubscription";
 
@@ -68,6 +72,23 @@ async function writeStoredPro(userId: string, isPro: boolean): Promise<void> {
     await SecureStore.setItemAsync(PRO_STATE_KEY(userId), isPro ? "1" : "0");
   } catch {
     // ignore
+  }
+}
+
+async function getAuthToken(): Promise<string | null> {
+  try {
+    return await SecureStore.getItemAsync("auth_token");
+  } catch {
+    return null;
+  }
+}
+
+async function hasNotificationPermission(): Promise<boolean> {
+  try {
+    const settings = await Notifications.getPermissionsAsync();
+    return settings.status === "granted";
+  } catch {
+    return false;
   }
 }
 
@@ -221,7 +242,7 @@ function AnimatedHint() {
       ]);
 
       sequenceRef.current = seq;
-      seq.start(() => {});
+      seq.start(() => { });
     };
 
     if (Platform.OS === "ios") {
@@ -319,6 +340,7 @@ export default function HomeScreen() {
 
   const insets = useSafeAreaInsets();
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [pushSyncUserId, setPushSyncUserId] = useState<string | null>(null);
 
   const { width } = useWindowDimensions();
   const isNarrow = width < 380;
@@ -332,6 +354,8 @@ export default function HomeScreen() {
 
   const [storedPro, setStoredPro] = useState<boolean | null>(null);
   const storedProLoadedRef = useRef(false);
+
+  const currentUserId = user?.id != null ? String(user.id) : null;
 
   useEffect(() => {
     if (!SUBSCRIPTIONS_ENABLED) return;
@@ -412,7 +436,7 @@ export default function HomeScreen() {
           // @ts-ignore
           router.back();
         }
-      } catch {}
+      } catch { }
 
       Alert.alert("✅ Subscription active!");
 
@@ -444,6 +468,82 @@ export default function HomeScreen() {
     return () => clearTimeout(t);
   }, [rcReady, isPro, subLoading, isLoggingOut, router]);
 
+  useEffect(() => {
+    if (!currentUserId) {
+      setPushSyncUserId(null);
+      return;
+    }
+
+    if (pushSyncUserId !== currentUserId) {
+      setPushSyncUserId(null);
+    }
+  }, [currentUserId]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const syncPushToken = async () => {
+      if (!currentUserId) return;
+      if (isLoggingOut) return;
+      if (pushSyncUserId === currentUserId) return;
+
+      try {
+        const token = await getAuthToken();
+        if (!token) {
+          console.log("No auth token found; skipping push token sync.");
+          return;
+        }
+
+        const pushToken = await registerForPushNotificationsAsync();
+        if (!pushToken) {
+          console.log("No push token returned.");
+          return;
+        }
+
+        const notificationsEnabled = await hasNotificationPermission();
+
+        const payload = {
+          device: {
+            platform: Platform.OS,
+            device_name:
+              Device.deviceName ||
+              Device.modelName ||
+              `${Platform.OS} device`,
+            os_version:
+              Device.osVersion || String(Platform.Version || ""),
+            app_version:
+              Application.nativeApplicationVersion || "dev",
+            push_token: pushToken,
+            notifications_enabled: notificationsEnabled,
+          },
+        };
+        // console.log("DEVICE REGISTER TOKEN EXISTS:", !!token);
+        // console.log("DEVICE REGISTER TOKEN PREFIX:", token ? token.slice(0, 24) : "NO TOKEN");
+        // console.log("DEVICE REGISTER PAYLOAD:", payload);
+        const res = await postJson("/v1/devices/register", payload, token);
+
+        if (!cancelled) {
+          if (res.ok) {
+            console.log("✅ Push token synced to backend", res.json);
+            setPushSyncUserId(currentUserId);
+          } else {
+            console.log("❌ Failed to sync push token", res.status, res.json);
+          }
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.log("❌ Push token sync error", error);
+        }
+      }
+    };
+
+    syncPushToken();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUserId, isLoggingOut, pushSyncUserId]);
+
   const handleOpenDebugPaywall = () => {
     if (!DEBUG_PAYWALL_BUTTON_ENABLED) return;
     if (isLoggingOut) return;
@@ -470,7 +570,7 @@ export default function HomeScreen() {
             if (token) {
               try {
                 await postJson("/v1/auth/logout", {}, token);
-              } catch {}
+              } catch { }
             }
 
             if (SUBSCRIPTIONS_ENABLED) {
@@ -488,6 +588,7 @@ export default function HomeScreen() {
             setRcReady(false);
             setStoredPro(null);
             storedProLoadedRef.current = false;
+            setPushSyncUserId(null);
           }
         },
       },
