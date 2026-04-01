@@ -1,4 +1,3 @@
-// app/(auth)/sign-in.tsx
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import * as SecureStore from "expo-secure-store";
@@ -155,13 +154,13 @@ export default function SignInScreen() {
           toValue: 1,
           duration: 320,
           easing: Easing.out(Easing.cubic),
-          useNativeDriver: false, // width
+          useNativeDriver: false,
         }),
         Animated.timing(signInIconAnim, {
           toValue: 1,
           duration: 320,
           easing: Easing.out(Easing.cubic),
-          useNativeDriver: true, // transform
+          useNativeDriver: true,
         }),
       ]).start(() => resolve());
     });
@@ -216,13 +215,13 @@ export default function SignInScreen() {
           toValue: 1,
           duration: 320,
           easing: Easing.out(Easing.cubic),
-          useNativeDriver: false, // width
+          useNativeDriver: false,
         }),
         Animated.timing(signUpIconAnim, {
           toValue: 1,
           duration: 320,
           easing: Easing.out(Easing.cubic),
-          useNativeDriver: true, // transform
+          useNativeDriver: true,
         }),
       ]).start(() => resolve());
     });
@@ -289,10 +288,9 @@ export default function SignInScreen() {
       });
 
       if (!ok) {
-        // ✅ detach RevenueCat user if a previous session was cached on device
         try {
           await rcLogoutUser();
-        } catch { }
+        } catch {}
 
         await SecureStore.deleteItemAsync("auth_token");
         await SecureStore.deleteItemAsync("auth_user");
@@ -312,11 +310,9 @@ export default function SignInScreen() {
       await SecureStore.setItemAsync("auth_token", token);
       await SecureStore.setItemAsync("auth_user", JSON.stringify(u));
 
-      // ✅ CRITICAL: identify BEFORE routing away / before Android auto-paywall can trigger
       if (u?.id != null) {
         await rcIdentifyUser(String(u.id));
 
-        // ✅ Immediately pull CustomerInfo once to “lock in” entitlements for this user
         try {
           const { getCustomerInfo } = await import("../src/subscriptions/rcClient");
           const info = await getCustomerInfo();
@@ -339,13 +335,11 @@ export default function SignInScreen() {
         "We couldn’t reach the server right now. Please check your connection and try again."
       );
     } finally {
-      // ✅ Always stop spinner. (If we routed away, this screen unmounts anyway.)
       setIsSigningIn(false);
 
-      // ✅ Reset the sign-in animation if we’re still here
       try {
         await resetSignInAnim();
-      } catch { }
+      } catch {}
     }
   };
 
@@ -368,6 +362,11 @@ export default function SignInScreen() {
       await resetSignUpAnim();
       setIsGoingToSignUp(false);
     }
+  };
+
+  const goToForgotPassword = () => {
+    if (anyBusy) return;
+    router.push("/(auth)/forgot-password");
   };
 
   return (
@@ -395,7 +394,6 @@ export default function SignInScreen() {
           >
             <View style={styles.main}>
               <View style={styles.form}>
-                {/* ✅ Tap 5x to open Debug RevenueCat screen */}
                 <Pressable
                   onPress={handleOpenDebugRC}
                   hitSlop={12}
@@ -414,6 +412,7 @@ export default function SignInScreen() {
                       value={email}
                       onChangeText={setEmail}
                       placeholder="you@example.com"
+                      placeholderTextColor={BRAND.muted}
                       autoCapitalize="none"
                       autoCorrect={false}
                       keyboardType="email-address"
@@ -434,6 +433,7 @@ export default function SignInScreen() {
                       onChangeText={setPassword}
                       secureTextEntry={secure}
                       placeholder="••••••••"
+                      placeholderTextColor={BRAND.muted}
                       style={styles.input}
                       editable={!anyBusy}
                       onSubmitEditing={handleSignIn}
@@ -485,45 +485,61 @@ export default function SignInScreen() {
                 </Pressable>
               </View>
 
-              <View style={styles.newMemberRow}>
-                <Text style={styles.newMemberText}>New member?</Text>
+              <View style={styles.bottomActionsRow}>
+                <View style={styles.bottomActionBlock}>
+                  <Text style={styles.newMemberText}>New member?</Text>
 
-                <Pressable
-                  onPress={goToSignUp}
-                  disabled={anyBusy}
-                  hitSlop={10}
-                  style={({ pressed }) => [
-                    styles.newMemberBtn,
-                    pressed && !anyBusy ? { opacity: 0.9 } : null,
-                    anyBusy ? { opacity: 0.75 } : null,
-                  ]}
-                >
-                  <Animated.View
-                    pointerEvents="none"
-                    style={[
-                      styles.newMemberFill,
-                      { width: signUpFillWidth, opacity: isGoingToSignUp ? 0.95 : 0 },
+                  <Pressable
+                    onPress={goToSignUp}
+                    disabled={anyBusy}
+                    hitSlop={10}
+                    style={({ pressed }) => [
+                      styles.newMemberBtn,
+                      pressed && !anyBusy ? { opacity: 0.9 } : null,
+                      anyBusy ? { opacity: 0.75 } : null,
                     ]}
-                  />
-                  <View style={styles.newMemberInner} pointerEvents="none">
-                    {isGoingToSignUp ? (
-                      <Animated.View style={{ transform: [{ translateX: signUpIconX }] }}>
-                        <Ionicons name="person-add" size={18} color="#FFFFFF" />
-                      </Animated.View>
-                    ) : (
-                      <>
-                        <Ionicons name="person-add" size={18} color={BRAND.blue} />
-                        <Text style={styles.newMemberBtnText}>Sign Up</Text>
-                        <Ionicons
-                          name="chevron-forward"
-                          size={16}
-                          color={BRAND.blue}
-                          style={{ opacity: 0.7 }}
-                        />
-                      </>
-                    )}
-                  </View>
-                </Pressable>
+                  >
+                    <Animated.View
+                      pointerEvents="none"
+                      style={[
+                        styles.newMemberFill,
+                        { width: signUpFillWidth, opacity: isGoingToSignUp ? 0.95 : 0 },
+                      ]}
+                    />
+                    <View style={styles.newMemberInner} pointerEvents="none">
+                      {isGoingToSignUp ? (
+                        <Animated.View style={{ transform: [{ translateX: signUpIconX }] }}>
+                          <Ionicons name="person-add" size={18} color="#FFFFFF" />
+                        </Animated.View>
+                      ) : (
+                        <>
+                          <Ionicons name="person-add" size={18} color={BRAND.blue} />
+                          <Text style={styles.newMemberBtnText}>Sign Up</Text>
+                        </>
+                      )}
+                    </View>
+                  </Pressable>
+                </View>
+
+                <View style={styles.bottomActionBlock}>
+                  <Text style={styles.newMemberText}>Need help?</Text>
+
+                  <Pressable
+                    onPress={goToForgotPassword}
+                    disabled={anyBusy}
+                    hitSlop={10}
+                    style={({ pressed }) => [
+                      styles.newMemberBtn,
+                      pressed && !anyBusy ? { opacity: 0.9 } : null,
+                      anyBusy ? { opacity: 0.75 } : null,
+                    ]}
+                  >
+                    <View style={styles.newMemberInner} pointerEvents="none">
+                      <Ionicons name="key-outline" size={18} color={BRAND.blue} />
+                      <Text style={styles.newMemberBtnText}>Forgot Password</Text>
+                    </View>
+                  </Pressable>
+                </View>
               </View>
 
               <View style={{ height: 18 }} />
@@ -646,10 +662,17 @@ const styles = StyleSheet.create({
     color: BRAND.text,
   },
 
-  newMemberRow: {
+  bottomActionsRow: {
     marginTop: 14,
-    alignItems: "center",
+    flexDirection: "row",
     justifyContent: "center",
+    alignItems: "flex-start",
+    gap: 12,
+  },
+
+  bottomActionBlock: {
+    flex: 1,
+    alignItems: "center",
     gap: 8,
   },
 
@@ -672,6 +695,7 @@ const styles = StyleSheet.create({
     backgroundColor: BRAND.blueSoft,
     borderWidth: 1,
     borderColor: BRAND.blueBorder,
+    minWidth: "100%",
   },
 
   newMemberFill: {

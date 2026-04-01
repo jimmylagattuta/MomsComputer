@@ -2,7 +2,7 @@
 
 // 🔧 LOCAL DEV TOGGLE
 // Flip to true when your phone should hit your computer on the same Wi-Fi.
-const USE_LOCAL_API = true; // ⬅️ set to false to use EXPO_PUBLIC_API_BASE_URL
+const USE_LOCAL_API = false; // ⬅️ set to false to use EXPO_PUBLIC_API_BASE_URL
 
 // Your computer's LAN IP + backend port
 // Home

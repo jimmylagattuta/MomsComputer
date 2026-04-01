@@ -1,3 +1,4 @@
+import * as SecureStore from "expo-secure-store";
 import { toE164Us } from "../utils/phone";
 import { postJson } from "./api/client";
 
@@ -21,6 +22,39 @@ function buildErrorMessage(payload: any, fallback: string) {
 function safeJson(value: any) {
   if (value && typeof value === "object") return value;
   return {};
+}
+
+async function patchJson(path: string, body: any, token?: string) {
+  const API_BASE =
+    process.env.EXPO_PUBLIC_API_BASE_URL || "http://localhost:3000";
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Accept: "application/json",
+  };
+
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  const response = await fetch(`${API_BASE}${path}`, {
+    method: "PATCH",
+    headers,
+    body: JSON.stringify(body),
+  });
+
+  let json: any = {};
+  try {
+    json = await response.json();
+  } catch {
+    json = {};
+  }
+
+  return {
+    ok: response.ok,
+    status: response.status,
+    json,
+  };
 }
 
 export async function requestPhoneCode(
@@ -143,7 +177,7 @@ export async function completeSignUp(params: {
   password: string;
   passwordConfirmation: string;
   phone: string;
-  verificationToken: string;
+  verificationToken?: string;
 }): Promise<
   ApiResult<{
     user: any;
@@ -157,13 +191,6 @@ export async function completeSignUp(params: {
     return { ok: false, error: "Invalid phone number" };
   }
 
-  if (!params.verificationToken) {
-    return {
-      ok: false,
-      error: "Phone must be verified first",
-    };
-  }
-
   try {
     const res = await postJson("/v1/auth/signup", {
       user: {
@@ -173,7 +200,7 @@ export async function completeSignUp(params: {
         password: params.password,
         password_confirmation: params.passwordConfirmation,
         phone: e164,
-        phone_verification_token: params.verificationToken,
+        // phone_verification_token: params.verificationToken,
       },
     });
 
@@ -198,6 +225,84 @@ export async function completeSignUp(params: {
     return {
       ok: false,
       error: "Network error during signup",
+    };
+  }
+}
+
+export async function changePassword(params: {
+  currentPassword: string;
+  newPassword: string;
+  newPasswordConfirmation: string;
+}): Promise<
+  ApiResult<{
+    success: boolean;
+    message?: string;
+  }>
+> {
+  const currentPassword = String(params.currentPassword || "");
+  const newPassword = String(params.newPassword || "");
+  const newPasswordConfirmation = String(params.newPasswordConfirmation || "");
+
+  if (!currentPassword) {
+    return { ok: false, error: "Enter your current password" };
+  }
+
+  if (!newPassword) {
+    return { ok: false, error: "Enter a new password" };
+  }
+
+  if (newPassword.length < 8) {
+    return { ok: false, error: "New password must be at least 8 characters" };
+  }
+
+  if (!newPasswordConfirmation) {
+    return { ok: false, error: "Confirm your new password" };
+  }
+
+  if (newPassword !== newPasswordConfirmation) {
+    return { ok: false, error: "New password and confirmation do not match" };
+  }
+
+  try {
+    const token = await SecureStore.getItemAsync("auth_token");
+
+    if (!token) {
+      return { ok: false, error: "You are not signed in" };
+    }
+
+    const res = await patchJson(
+      "/v1/auth/change_password",
+      {
+        current_password: currentPassword,
+        password: newPassword,
+        password_confirmation: newPasswordConfirmation,
+      },
+      token
+    );
+
+    const json = safeJson(res?.json);
+
+    if (!res?.ok) {
+      return {
+        ok: false,
+        error: buildErrorMessage(json, "Could not change password"),
+      };
+    }
+
+    return {
+      ok: true,
+      data: {
+        success: true,
+        message:
+          json?.message ||
+          json?.notice ||
+          "Your password has been updated",
+      },
+    };
+  } catch {
+    return {
+      ok: false,
+      error: "Network error while changing password",
     };
   }
 }

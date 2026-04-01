@@ -3,25 +3,24 @@ import { useRouter } from "expo-router";
 import * as SecureStore from "expo-secure-store";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-    Alert,
-    Animated,
-    Easing,
-    Image,
-    InteractionManager,
-    Keyboard,
-    KeyboardAvoidingView,
-    Platform,
-    Pressable,
-    SafeAreaView,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    View,
+  Alert,
+  Animated,
+  Easing,
+  Image,
+  InteractionManager,
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../auth/AuthProvider";
-import PhoneVerificationBlock from "../components/auth/PhoneVerificationBlock";
 import { completeSignUp } from "../services/auth";
 import { FONT } from "../theme";
 
@@ -87,10 +86,7 @@ export default function SignUpScreen() {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
-
   const [phone, setPhone] = useState("");
-  const [phoneVerified, setPhoneVerified] = useState(false);
-  const [verificationToken, setVerificationToken] = useState("");
 
   const [password, setPassword] = useState("");
   const [passwordConfirm, setPasswordConfirm] = useState("");
@@ -208,9 +204,7 @@ export default function SignUpScreen() {
     if (!fn) return "Please enter your first name.";
     if (!em) return "Please enter your email.";
     if (!looksLikeEmail(em)) return "That email doesn’t look right.";
-    if (!phoneVerified || !verificationToken) {
-      return "Please verify your phone number before creating your account.";
-    }
+    if (!phone.trim()) return "Please enter your phone number.";
     if (!pw) return "Please create a password.";
     if (pw.length < 8) return "Password must be at least 8 characters.";
     if (!pc) return "Please re-type your password.";
@@ -222,10 +216,9 @@ export default function SignUpScreen() {
     !isSigningUp &&
     !!norm(firstName) &&
     !!norm(email) &&
+    !!norm(phone) &&
     !!password &&
-    !!passwordConfirm &&
-    phoneVerified &&
-    !!verificationToken;
+    !!passwordConfirm;
 
   const handleSignUp = async () => {
     if (isSigningUp) return;
@@ -252,8 +245,7 @@ export default function SignUpScreen() {
         email: normEmail(email),
         password: String(password || "").trim(),
         passwordConfirmation: String(passwordConfirm || "").trim(),
-        phone,
-        verificationToken,
+        phone: norm(phone),
       });
 
       if (!result?.ok) {
@@ -357,6 +349,9 @@ export default function SignUpScreen() {
                       style={styles.input}
                       editable={!isSigningUp}
                       returnKeyType="next"
+                      autoCorrect={false}
+                      autoComplete="off"
+                      textContentType="none"
                     />
                   </View>
                 </View>
@@ -376,6 +371,9 @@ export default function SignUpScreen() {
                       style={styles.input}
                       editable={!isSigningUp}
                       returnKeyType="next"
+                      autoCorrect={false}
+                      autoComplete="off"
+                      textContentType="none"
                     />
                   </View>
                 </View>
@@ -397,6 +395,9 @@ export default function SignUpScreen() {
                       style={styles.input}
                       editable={!isSigningUp}
                       returnKeyType="next"
+                      autoCorrect={false}
+                      autoComplete="off"
+                      textContentType="none"
                     />
                     {email.trim().length > 0 && (
                       <Ionicons
@@ -410,33 +411,25 @@ export default function SignUpScreen() {
                 </View>
 
                 <View style={styles.field}>
-                  <View style={styles.inlineFieldHeader}>
-                    <Text style={styles.label}>Phone Number</Text>
-                    {phoneVerified ? (
-                      <View style={styles.inlineVerifiedPill}>
-                        <Ionicons name="checkmark-circle" size={14} color={BRAND.ok} />
-                        <Text style={styles.inlineVerifiedText}>Verified</Text>
-                      </View>
-                    ) : null}
-                  </View>
-
+                  <Text style={styles.label}>Phone Number</Text>
                   <Text style={styles.helperText}>
-                    We’ll use this for account setup and verification.
+                    We’ll save this to your account for future contact and support.
                   </Text>
 
-                  <View style={styles.phoneBlockShell}>
-                    <PhoneVerificationBlock
+                  <View style={styles.inputRow}>
+                    <Ionicons name="call" size={22} color={BRAND.blue} />
+                    <TextInput
                       value={phone}
-                      onChange={(value) => {
-                        setPhone(value);
-                        setPhoneVerified(false);
-                        setVerificationToken("");
+                      onChangeText={(t) => {
+                        setPhone(t);
                         if (inlineError) setInlineError(null);
                       }}
-                      verified={phoneVerified}
-                      onVerifiedChange={setPhoneVerified}
-                      verificationToken={verificationToken}
-                      onVerificationTokenChange={setVerificationToken}
+                      placeholder="(555) 555-5555"
+                      placeholderTextColor="#98A2B3"
+                      keyboardType="phone-pad"
+                      style={styles.input}
+                      editable={!isSigningUp}
+                      returnKeyType="next"
                     />
                   </View>
                 </View>
@@ -635,34 +628,6 @@ const styles = StyleSheet.create({
     fontFamily: FONT.regular,
     fontSize: 12,
     lineHeight: 16,
-  },
-
-  inlineFieldHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-
-  inlineVerifiedPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 999,
-    backgroundColor: BRAND.okSoft,
-    borderWidth: 1,
-    borderColor: "#D1FADF",
-  },
-
-  inlineVerifiedText: {
-    color: BRAND.ok,
-    fontFamily: FONT.medium,
-    fontSize: 12,
-  },
-
-  phoneBlockShell: {
-    marginTop: 8,
   },
 
   errorBox: {

@@ -25,6 +25,7 @@ import { postJson } from "../../services/api/client";
 import { registerForPushNotificationsAsync } from "../../services/notifications";
 import { rcIdentifyUser, rcLogoutUser } from "../../subscriptions/rcClient";
 import { useSubscription } from "../../subscriptions/useSubscription";
+import HomeSettingsMenu from "./components/HomeSettingsMenu";
 
 /**
  * ✅ DEV TOGGLES
@@ -341,6 +342,7 @@ export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [pushSyncUserId, setPushSyncUserId] = useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const { width } = useWindowDimensions();
   const isNarrow = width < 380;
@@ -382,7 +384,7 @@ export default function HomeScreen() {
     return () => {
       cancelled = true;
     };
-    
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
@@ -518,9 +520,7 @@ export default function HomeScreen() {
             notifications_enabled: notificationsEnabled,
           },
         };
-        // console.log("DEVICE REGISTER TOKEN EXISTS:", !!token);
-        // console.log("DEVICE REGISTER TOKEN PREFIX:", token ? token.slice(0, 24) : "NO TOKEN");
-        // console.log("DEVICE REGISTER PAYLOAD:", payload);
+
         const res = await postJson("/v1/devices/register", payload, token);
 
         if (!cancelled) {
@@ -548,6 +548,7 @@ export default function HomeScreen() {
   const handleOpenDebugPaywall = () => {
     if (!DEBUG_PAYWALL_BUTTON_ENABLED) return;
     if (isLoggingOut) return;
+    setSettingsOpen(false);
 
     router.push({
       pathname: "/paywall",
@@ -555,8 +556,22 @@ export default function HomeScreen() {
     });
   };
 
+  const handleOpenSubscription = () => {
+    if (isLoggingOut) return;
+    setSettingsOpen(false);
+    router.push("/(app)/subscription-privileges");
+  };
+
+  const handleGoToChangePassword = () => {
+    if (isLoggingOut) return;
+    setSettingsOpen(false);
+    router.push("/(app)/change-password");
+  };
+
   const handleLogout = () => {
     if (isLoggingOut) return;
+
+    setSettingsOpen(false);
 
     Alert.alert("Log out?", "You’ll need to sign in again to use Ask Mom.", [
       { text: "Cancel", style: "cancel" },
@@ -590,6 +605,7 @@ export default function HomeScreen() {
             setStoredPro(null);
             storedProLoadedRef.current = false;
             setPushSyncUserId(null);
+            setSettingsOpen(false);
           }
         },
       },
@@ -597,6 +613,7 @@ export default function HomeScreen() {
   };
 
   const handleCallMom = () => {
+    setSettingsOpen(false);
     router.push("/(app)/call-mom");
   };
 
@@ -633,28 +650,15 @@ export default function HomeScreen() {
 
           <View style={{ flex: 1 }} />
 
-          <Pressable
-            onPress={handleLogout}
+          <HomeSettingsMenu
+            open={settingsOpen}
             disabled={isLoggingOut}
-            hitSlop={12}
-            style={({ pressed }) => [
-              styles.logoutChip,
-              pressed && !isLoggingOut && styles.logoutChipPressed,
-              isLoggingOut && { opacity: 0.6 },
-            ]}
-          >
-            {isLoggingOut ? (
-              <>
-                <ActivityIndicator size="small" color={BRAND.blue} />
-                <Text style={styles.logoutChipText}>Logging out…</Text>
-              </>
-            ) : (
-              <>
-                <Ionicons name="walk" size={22} color={BRAND.blue} style={{ transform: [{ scaleX: -1 }] }} />
-                <Text style={styles.logoutChipText}>Logout</Text>
-              </>
-            )}
-          </Pressable>
+            onToggle={() => setSettingsOpen((prev) => !prev)}
+            onClose={() => setSettingsOpen(false)}
+            onOpenSubscription={handleOpenSubscription}
+            onChangePassword={handleGoToChangePassword}
+            onLogout={handleLogout}
+          />
         </View>
 
         <View style={[styles.main, { paddingBottom: footerTotalHeight }]}>
@@ -671,7 +675,10 @@ export default function HomeScreen() {
           <View style={[styles.actionsWrap, { paddingTop: 4 }]}>
             <View style={styles.actions}>
               <Pressable
-                onPress={() => router.push("/(app)/ask-mom")}
+                onPress={() => {
+                  setSettingsOpen(false);
+                  router.push("/(app)/ask-mom");
+                }}
                 disabled={isLoggingOut}
                 style={({ pressed }) => [
                   styles.bigBtn,
@@ -698,7 +705,10 @@ export default function HomeScreen() {
               </Pressable>
 
               <Pressable
-                onPress={() => router.push("/(app)/text-mom")}
+                onPress={() => {
+                  setSettingsOpen(false);
+                  router.push("/(app)/text-mom");
+                }}
                 disabled={isLoggingOut}
                 style={({ pressed }) => [
                   styles.bigBtn,
@@ -810,6 +820,7 @@ const styles = StyleSheet.create({
   },
 
   topBar: {
+    zIndex: 50,
     flexDirection: "row",
     alignItems: "center",
     paddingTop: IS_ANDROID ? 0 : 2,
@@ -834,30 +845,6 @@ const styles = StyleSheet.create({
   },
 
   debugChipText: {
-    color: BRAND.blue,
-    fontFamily: FONT.medium,
-    fontSize: IS_ANDROID ? 13 : 14,
-    letterSpacing: 0.35,
-  },
-
-  logoutChip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingVertical: IS_ANDROID ? 6 : 8,
-    paddingHorizontal: 12,
-    borderRadius: 999,
-    backgroundColor: BRAND.blueSoft,
-    borderWidth: 1,
-    borderColor: BRAND.blueBorder,
-  },
-
-  logoutChipPressed: {
-    opacity: 0.85,
-    transform: [{ scale: 0.99 }],
-  },
-
-  logoutChipText: {
     color: BRAND.blue,
     fontFamily: FONT.medium,
     fontSize: IS_ANDROID ? 13 : 14,
