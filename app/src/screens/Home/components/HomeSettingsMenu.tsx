@@ -23,6 +23,7 @@ type HomeSettingsMenuProps = {
   disabled?: boolean;
   onToggle: () => void;
   onClose: () => void;
+  onOpenProfile: () => void;
   onOpenSubscription: () => void;
   onChangePassword: () => void;
   onLogout: () => void;
@@ -33,6 +34,7 @@ export default function HomeSettingsMenu({
   disabled = false,
   onToggle,
   onClose,
+  onOpenProfile,
   onOpenSubscription,
   onChangePassword,
   onLogout,
@@ -55,7 +57,26 @@ export default function HomeSettingsMenu({
       {open && !disabled && (
         <>
           <Pressable style={styles.dropdownBackdrop} onPress={onClose} />
+
           <View style={styles.dropdownMenu}>
+            <Pressable
+              onPress={onOpenProfile}
+              style={({ pressed }) => [
+                styles.dropdownItem,
+                pressed && styles.dropdownItemPressed,
+              ]}
+            >
+              <Ionicons name="person-outline" size={20} color={BRAND.blue} />
+              <View style={styles.textBlock}>
+                <Text style={styles.dropdownItemText}>Profile</Text>
+                <Text style={styles.dropdownItemSubtext}>
+                  View your basic account info
+                </Text>
+              </View>
+            </Pressable>
+
+            <View style={styles.divider} />
+
             <Pressable
               onPress={onOpenSubscription}
               style={({ pressed }) => [
@@ -99,9 +120,15 @@ export default function HomeSettingsMenu({
                 pressed && styles.dropdownDangerPressed,
               ]}
             >
-              <Ionicons name="log-out-outline" size={20} color={BRAND.dangerText} />
+              <Ionicons
+                name="log-out-outline"
+                size={20}
+                color={BRAND.dangerText}
+              />
               <View style={styles.textBlock}>
-                <Text style={[styles.dropdownItemText, { color: BRAND.dangerText }]}>
+                <Text
+                  style={[styles.dropdownItemText, { color: BRAND.dangerText }]}
+                >
                   Logout
                 </Text>
                 <Text style={styles.dropdownItemSubtext}>

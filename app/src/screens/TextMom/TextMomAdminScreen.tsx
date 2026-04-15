@@ -547,35 +547,106 @@ export default function TextMomAdminScreen() {
     setPickedImages([]);
   }, [cleanupSelectedThreadSubscription]);
 
-  const pickImages = useCallback(async () => {
+  const addPickedImages = useCallback((nextImages: UiImage[]) => {
+    setPickedImages((prev) => {
+      const merged = [...prev];
+
+      for (const img of nextImages) {
+        if (merged.some((m) => m.uri === img.uri)) continue;
+        if (merged.length >= 4) break;
+        merged.push(img);
+      }
+
+      return merged.slice(0, 4);
+    });
+  }, []);
+
+  const openCamera = useCallback(async () => {
+    try {
+      if (pickedImages.length >= 4) {
+        Alert.alert("Image limit", "Maximum of 4 images.");
+        return;
+      }
+
+      const permission = await ImagePicker.requestCameraPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert("Permission needed", "Allow camera access.");
+        return;
+      }
+
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ["images"],
+        quality: 0.82,
+        cameraType: ImagePicker.CameraType.back,
+      });
+
+      if (result.canceled) return;
+
+      const nextImages: UiImage[] = result.assets.map((asset, index) => ({
+        uri: asset.uri,
+        name: asset.fileName || `support-camera-${Date.now()}-${index}.jpg`,
+        type: asset.mimeType || "image/jpeg",
+      }));
+
+      addPickedImages(nextImages);
+    } catch (e) {
+      console.warn("ADMIN CAMERA PICK FAILED", e);
+      Alert.alert("Couldn’t open camera", "Please try again.");
+    }
+  }, [addPickedImages, pickedImages.length]);
+
+  const openPhotoLibrary = useCallback(async () => {
+    try {
+      if (pickedImages.length >= 4) {
+        Alert.alert("Image limit", "Maximum of 4 images.");
+        return;
+      }
+
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert("Permission needed", "Allow photo access.");
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        allowsMultipleSelection: true,
+        selectionLimit: 4 - pickedImages.length,
+        quality: 0.82,
+      });
+
+      if (result.canceled) return;
+
+      const nextImages: UiImage[] = result.assets.map((asset, index) => ({
+        uri: asset.uri,
+        name: asset.fileName || `support-${Date.now()}-${index}.jpg`,
+        type: asset.mimeType || "image/jpeg",
+      }));
+
+      addPickedImages(nextImages);
+    } catch (e) {
+      console.warn("ADMIN IMAGE PICK FAILED", e);
+      Alert.alert("Couldn’t open photos", "Please try again.");
+    }
+  }, [addPickedImages, pickedImages.length]);
+
+  const pickImages = useCallback(() => {
     if (pickedImages.length >= 4) {
       Alert.alert("Image limit", "Maximum of 4 images.");
       return;
     }
 
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) {
-      Alert.alert("Permission needed", "Allow photo access.");
-      return;
-    }
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ["images"],
-      allowsMultipleSelection: true,
-      selectionLimit: 4 - pickedImages.length,
-      quality: 0.82,
-    });
-
-    if (result.canceled) return;
-
-    const nextImages: UiImage[] = result.assets.map((asset, index) => ({
-      uri: asset.uri,
-      name: asset.fileName || `support-${Date.now()}-${index}.jpg`,
-      type: asset.mimeType || "image/jpeg",
-    }));
-
-    setPickedImages((prev) => [...prev, ...nextImages].slice(0, 4));
-  }, [pickedImages.length]);
+    Alert.alert(
+      "Add image",
+      "Choose how you want to attach an image.",
+      [
+        { text: "Open Camera", onPress: openCamera },
+        { text: "Choose from Photos", onPress: openPhotoLibrary },
+        { text: "Cancel", style: "cancel" },
+      ],
+      { cancelable: true }
+    );
+  }, [openCamera, openPhotoLibrary, pickedImages.length]);
 
   const handleSend = useCallback(async () => {
     const activeThreadId = selectedThreadIdRef.current;

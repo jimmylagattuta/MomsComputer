@@ -338,8 +338,79 @@ export default function AskMomScreen() {
     );
   };
 
-  // ✅ Opens photo album and lets user select up to 5 images total (across multiple opens)
-  const handlePressAddImage = async () => {
+  // ✅ shared helper so camera + library both merge images the same way
+  const addImagesToComposer = async (inputUris: string[]) => {
+    const convertedUris: string[] = [];
+
+    for (const u of inputUris) {
+      try {
+        const jpegUri = await ensureJpegUri(u);
+        convertedUris.push(jpegUri);
+      } catch (err) {
+        console.log("IMAGE CONVERT FAILED", u, err);
+        convertedUris.push(u);
+      }
+    }
+
+    const picked: ComposerImage[] = convertedUris.map((uri) => ({
+      uri,
+      loading: true,
+    }));
+
+    setComposerImages((prev) => {
+      const merged = [...prev];
+
+      for (const img of picked) {
+        if (merged.some((m) => m.uri === img.uri)) continue;
+        if (merged.length >= MAX_IMAGES) break;
+        merged.push(img);
+      }
+
+      return merged;
+    });
+
+    setTimeout(() => scrollToBottom(true), 30);
+  };
+
+  const handleOpenCamera = async () => {
+    try {
+      const remaining = Math.max(0, MAX_IMAGES - composerImages.length);
+      if (remaining <= 0) {
+        Alert.alert("Max 5 images", "Remove one to add another.");
+        return;
+      }
+
+      const perm = await ImagePicker.requestCameraPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert(
+          "Camera access needed",
+          "Please allow camera access to take a photo."
+        );
+        return;
+      }
+
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.9,
+        cameraType: ImagePicker.CameraType.back,
+      });
+
+      if (result.canceled) return;
+
+      const capturedUris = (result.assets || [])
+        .map((a) => a?.uri)
+        .filter(Boolean) as string[];
+
+      if (!capturedUris.length) return;
+
+      await addImagesToComposer(capturedUris);
+    } catch (e: any) {
+      console.log("CAMERA OPEN FAILED (AskMomScreen)", e);
+      Alert.alert("Couldn’t open camera", "Please try again.");
+    }
+  };
+
+  const handleOpenPhotoLibrary = async () => {
     try {
       const remaining = Math.max(0, MAX_IMAGES - composerImages.length);
       if (remaining <= 0) {
@@ -369,39 +440,33 @@ export default function AskMomScreen() {
         .map((a) => a?.uri)
         .filter(Boolean) as string[];
 
-      const convertedUris: string[] = [];
-      for (const u of pickedUris) {
-        try {
-          const jpegUri = await ensureJpegUri(u);
-          convertedUris.push(jpegUri);
-        } catch (err) {
-          console.log("IMAGE CONVERT FAILED", u, err);
-          convertedUris.push(u);
-        }
-      }
+      if (!pickedUris.length) return;
 
-      const picked: ComposerImage[] = convertedUris.map((uri) => ({
-        uri,
-        loading: true,
-      }));
-
-      setComposerImages((prev) => {
-        const merged = [...prev];
-
-        for (const img of picked) {
-          if (merged.some((m) => m.uri === img.uri)) continue;
-          if (merged.length >= MAX_IMAGES) break;
-          merged.push(img);
-        }
-
-        return merged;
-      });
-
-      setTimeout(() => scrollToBottom(true), 30);
+      await addImagesToComposer(pickedUris);
     } catch (e: any) {
       console.log("IMAGE PICK FAILED (AskMomScreen)", e);
       Alert.alert("Couldn’t open photos", "Please try again.");
     }
+  };
+
+  // ✅ show options when photo button is tapped
+  const handlePressAddImage = () => {
+    const remaining = Math.max(0, MAX_IMAGES - composerImages.length);
+    if (remaining <= 0) {
+      Alert.alert("Max 5 images", "Remove one to add another.");
+      return;
+    }
+
+    Alert.alert(
+      "Add image",
+      "Choose how you want to attach an image.",
+      [
+        { text: "Open Camera", onPress: handleOpenCamera },
+        { text: "Choose from Photos", onPress: handleOpenPhotoLibrary },
+        { text: "Cancel", style: "cancel" },
+      ],
+      { cancelable: true }
+    );
   };
 
   const handleRemoveImage = (uri: string) => {
@@ -461,15 +526,15 @@ export default function AskMomScreen() {
         prev.map((m) =>
           m.id === thinkingId
             ? {
-                ...m,
-                text: assistantText,
-                pending: false,
-                show_contact_panel: !!res.show_contact_panel,
-                escalation_reason: res.escalation_reason || null,
-                contact_actions: res.contact_actions || null,
-                contact_draft: res.contact_draft || null,
-                contact_targets: res.contact_targets || null,
-              }
+              ...m,
+              text: assistantText,
+              pending: false,
+              show_contact_panel: !!res.show_contact_panel,
+              escalation_reason: res.escalation_reason || null,
+              contact_actions: res.contact_actions || null,
+              contact_draft: res.contact_draft || null,
+              contact_targets: res.contact_targets || null,
+            }
             : m
         )
       );
@@ -488,11 +553,11 @@ export default function AskMomScreen() {
         prev.map((m) =>
           m.id === thinkingId
             ? {
-                ...m,
-                text:
-                  "I couldn’t reach the server right now. Please try again.\n\n(If this is urgent or involves money/codes, don’t proceed—tell me what it said.)",
-                pending: false,
-              }
+              ...m,
+              text:
+                "I couldn’t reach the server right now. Please try again.\n\n(If this is urgent or involves money/codes, don’t proceed—tell me what it said.)",
+              pending: false,
+            }
             : m
         )
       );

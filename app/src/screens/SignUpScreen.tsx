@@ -10,19 +10,23 @@ import {
   InteractionManager,
   Keyboard,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../auth/AuthProvider";
-import { completeSignUp } from "../services/auth";
-import { FONT } from "../theme";
+import {
+  completeSignUp,
+  requestPhoneCode,
+  verifyPhoneCode,
+} from "../services/auth";
+import { FONT } from "./../theme";
 
 const BRAND = {
   pageBg: "#0B1220",
@@ -45,6 +49,9 @@ const BRAND = {
 const LOGO_URI =
   "https://res.cloudinary.com/djtsuktwb/image/upload/v1769703507/ChatGPT_Image_Jan_29_2026_08_00_07_AM_1_3_gtqeo8.jpg";
 
+const PRIVACY_POLICY_URL = "https://momscomputer.com/privacy/";
+const TERMS_URL = "https://momscomputer.com/terms/";
+
 const H_PADDING = 18;
 const LOGO_ASPECT_RATIO = 1.75;
 const LOGO_BOTTOM_GAP = 10;
@@ -62,6 +69,18 @@ function looksLikeEmail(email: string) {
   return /^\S+@\S+\.\S+$/.test(e);
 }
 
+function digitsOnly(value: string) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function formatPhoneDisplay(value: string) {
+  const digits = digitsOnly(value).slice(0, 10);
+
+  if (digits.length <= 3) return digits;
+  if (digits.length <= 6) return `(${digits.slice(0, 3)}) ${digits.slice(3)}`;
+  return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6, 10)}`;
+}
+
 function afterNextPaint(): Promise<void> {
   return new Promise((resolve) => {
     requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
@@ -74,6 +93,15 @@ function letAnimationBeSeen(ms: number): Promise<void> {
       setTimeout(() => resolve(), ms);
     });
   });
+}
+
+function formatCountdown(seconds: number) {
+  const safe = Math.max(0, Math.floor(seconds || 0));
+  const mins = Math.floor(safe / 60);
+  const secs = safe % 60;
+
+  if (mins <= 0) return `${secs}s`;
+  return `${mins}:${String(secs).padStart(2, "0")}`;
 }
 
 type PwHintState = "hidden" | "match" | "mismatch";
@@ -91,13 +119,28 @@ export default function SignUpScreen() {
   const [password, setPassword] = useState("");
   const [passwordConfirm, setPasswordConfirm] = useState("");
 
+  const [code, setCode] = useState("");
+  const [codeSent, setCodeSent] = useState(false);
+  const [phoneVerified, setPhoneVerified] = useState(false);
+  const [verificationToken, setVerificationToken] = useState("");
+  const [maskedPhone, setMaskedPhone] = useState("");
+  const [cooldown, setCooldown] = useState(0);
+
   const [secure1, setSecure1] = useState(true);
   const [secure2, setSecure2] = useState(true);
 
+  const [isSendingCode, setIsSendingCode] = useState(false);
+  const [isVerifyingCode, setIsVerifyingCode] = useState(false);
   const [isSigningUp, setIsSigningUp] = useState(false);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
 
-  const [inlineError, setInlineError] = useState<string | null>(null);
+  const [nameError, setNameError] = useState<string | null>(null);
+  const [emailError, setEmailError] = useState<string | null>(null);
+  const [phoneError, setPhoneError] = useState<string | null>(null);
+  const [codeError, setCodeError] = useState<string | null>(null);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [generalError, setGeneralError] = useState<string | null>(null);
+  const [inlineSuccess, setInlineSuccess] = useState<string | null>(null);
 
   const [pwHint, setPwHint] = useState<PwHintState>("hidden");
   const confirmTypingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -120,6 +163,90 @@ export default function SignUpScreen() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (cooldown <= 0) return;
+
+    const id = setInterval(() => {
+      setCooldown((prev) => {
+        if (prev <= 1) {
+          clearInterval(id);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(id);
+  }, [cooldown]);
+
+  const clearAllErrors = () => {
+    setNameError(null);
+    setEmailError(null);
+    setPhoneError(null);
+    setCodeError(null);
+    setPasswordError(null);
+    setGeneralError(null);
+  };
+
+  const clearFieldErrorsOnEdit = (field: "name" | "email" | "phone" | "code" | "password") => {
+    if (field === "name") setNameError(null);
+    if (field === "email") setEmailError(null);
+    if (field === "phone") {
+      setPhoneError(null);
+      setCodeError(null);
+    }
+    if (field === "code") setCodeError(null);
+    if (field === "password") setPasswordError(null);
+    setGeneralError(null);
+  };
+
+  const setCategorizedError = (message: string) => {
+    const msg = String(message || "").trim();
+    const lower = msg.toLowerCase();
+
+    clearAllErrors();
+
+    if (
+      lower.includes("first name") ||
+      lower.includes("last name") ||
+      lower === "please enter your first name."
+    ) {
+      setNameError(msg);
+      return;
+    }
+
+    if (lower.includes("email")) {
+      setEmailError(msg);
+      return;
+    }
+
+    if (
+      lower.includes("6-digit code") ||
+      lower.includes("invalid or expired code") ||
+      lower.includes("verification code") ||
+      lower.includes("enter the 6-digit code")
+    ) {
+      setCodeError(msg);
+      return;
+    }
+
+    if (
+      lower.includes("phone") ||
+      lower.includes("number") ||
+      lower.includes("verification token")
+    ) {
+      setPhoneError(msg);
+      return;
+    }
+
+    if (lower.includes("password")) {
+      setPasswordError(msg);
+      return;
+    }
+
+    setGeneralError(msg);
+  };
 
   const schedulePwHintCheck = (nextConfirm: string, delayMs = 700) => {
     if (confirmTypingTimerRef.current) {
@@ -200,32 +327,161 @@ export default function SignUpScreen() {
     const em = normEmail(email);
     const pw = String(password || "");
     const pc = String(passwordConfirm || "");
+    const phoneDigits = digitsOnly(phone);
 
-    if (!fn) return "Please enter your first name.";
-    if (!em) return "Please enter your email.";
-    if (!looksLikeEmail(em)) return "That email doesn’t look right.";
-    if (!phone.trim()) return "Please enter your phone number.";
-    if (!pw) return "Please create a password.";
-    if (pw.length < 8) return "Password must be at least 8 characters.";
-    if (!pc) return "Please re-type your password.";
-    if (pw !== pc) return "Passwords do not match.";
+    if (!fn) return { field: "name", message: "Please enter your first name." };
+    if (!em) return { field: "email", message: "Please enter your email." };
+    if (!looksLikeEmail(em)) return { field: "email", message: "That email doesn’t look right." };
+    if (!phoneDigits) return { field: "phone", message: "Please enter your phone number." };
+    if (phoneDigits.length !== 10) return { field: "phone", message: "Enter a valid 10-digit phone number." };
+    if (!phoneVerified || !verificationToken) {
+      return { field: "phone", message: "Please verify your phone number first." };
+    }
+    if (!pw) return { field: "password", message: "Please create a password." };
+    if (pw.length < 8) return { field: "password", message: "Password must be at least 8 characters." };
+    if (!pc) return { field: "password", message: "Please re-type your password." };
+    if (pw !== pc) return { field: "password", message: "Passwords do not match." };
     return null;
   };
 
+  const canSendCode =
+    !isSendingCode &&
+    !isSigningUp &&
+    digitsOnly(phone).length === 10 &&
+    cooldown === 0;
+
+  const canVerifyCode =
+    !isVerifyingCode &&
+    !isSigningUp &&
+    codeSent &&
+    !phoneVerified &&
+    digitsOnly(code).length === 6 &&
+    digitsOnly(phone).length === 10;
+
   const canSubmit =
     !isSigningUp &&
+    !isSendingCode &&
+    !isVerifyingCode &&
     !!norm(firstName) &&
     !!norm(email) &&
-    !!norm(phone) &&
+    digitsOnly(phone).length === 10 &&
     !!password &&
-    !!passwordConfirm;
+    !!passwordConfirm &&
+    phoneVerified &&
+    !!verificationToken;
+
+  const openUrl = async (url: string) => {
+    try {
+      await Linking.openURL(url);
+    } catch {
+      Alert.alert("Unable to open link", url);
+    }
+  };
+
+  const handlePhoneChange = (value: string) => {
+    const formatted = formatPhoneDisplay(value);
+    const priorDigits = digitsOnly(phone);
+    const nextDigits = digitsOnly(formatted);
+
+    setPhone(formatted);
+    clearFieldErrorsOnEdit("phone");
+    setInlineSuccess(null);
+
+    if (nextDigits !== priorDigits) {
+      if (phoneVerified) {
+        setPhoneVerified(false);
+        setVerificationToken("");
+        setInlineSuccess(null);
+      }
+
+      if (codeSent) {
+        setCodeSent(false);
+        setCode("");
+        setMaskedPhone("");
+        setCooldown(0);
+      }
+    }
+  };
+
+  const handleCodeChange = (value: string) => {
+    const clean = digitsOnly(value).slice(0, 6);
+    setCode(clean);
+    clearFieldErrorsOnEdit("code");
+    setInlineSuccess(null);
+  };
+
+  const handleSendCode = async () => {
+    if (!canSendCode) return;
+
+    clearAllErrors();
+    setInlineSuccess(null);
+
+    try {
+      setIsSendingCode(true);
+
+      const result = await requestPhoneCode(phone);
+
+      if (!result?.ok) {
+        setCategorizedError(result?.error || "Could not send verification code.");
+        return;
+      }
+
+      const nextCooldown = Number(result?.data?.cooldown || 0);
+
+      setCodeSent(true);
+      setPhoneVerified(false);
+      setVerificationToken("");
+      setCode("");
+      setMaskedPhone(result?.data?.maskedPhone || "");
+      setCooldown(nextCooldown);
+      setInlineSuccess("Verification code sent.");
+    } catch {
+      setPhoneError("Network error while sending code.");
+    } finally {
+      setIsSendingCode(false);
+    }
+  };
+
+  const handleVerifyCode = async () => {
+    if (!canVerifyCode) return;
+
+    clearAllErrors();
+    setInlineSuccess(null);
+
+    try {
+      setIsVerifyingCode(true);
+
+      const result = await verifyPhoneCode(phone, code);
+
+      if (!result?.ok) {
+        setCategorizedError(result?.error || "Invalid or expired code.");
+        return;
+      }
+
+      setPhoneVerified(true);
+      setVerificationToken(result?.data?.verificationToken || "");
+      setInlineSuccess("Phone number verified.");
+    } catch {
+      setCodeError("Network error while verifying code.");
+    } finally {
+      setIsVerifyingCode(false);
+    }
+  };
 
   const handleSignUp = async () => {
     if (isSigningUp) return;
 
     const v = validateClient();
+
     if (v) {
-      setInlineError(v);
+      clearAllErrors();
+
+      if (v.field === "name") setNameError(v.message);
+      if (v.field === "email") setEmailError(v.message);
+      if (v.field === "phone") setPhoneError(v.message);
+      if (v.field === "code") setCodeError(v.message);
+      if (v.field === "password") setPasswordError(v.message);
+
       if (password && passwordConfirm) {
         setPwHint(password === passwordConfirm ? "match" : "mismatch");
       }
@@ -234,7 +490,8 @@ export default function SignUpScreen() {
 
     try {
       setIsSigningUp(true);
-      setInlineError(null);
+      clearAllErrors();
+      setInlineSuccess(null);
       await afterNextPaint();
 
       await runFillAnim();
@@ -246,6 +503,7 @@ export default function SignUpScreen() {
         password: String(password || "").trim(),
         passwordConfirmation: String(passwordConfirm || "").trim(),
         phone: norm(phone),
+        verificationToken,
       });
 
       if (!result?.ok) {
@@ -256,7 +514,7 @@ export default function SignUpScreen() {
         setIsSigningUp(false);
 
         const msg = result?.error || "Unable to create account.";
-        setInlineError(msg);
+        setCategorizedError(msg);
         return;
       }
 
@@ -281,10 +539,12 @@ export default function SignUpScreen() {
 
       setPassword("");
       setPasswordConfirm("");
+      setCode("");
+      setVerificationToken("");
     } catch {
       await resetFillAnim();
       setIsSigningUp(false);
-      Alert.alert("Network error", "Could not reach backend. Check LAN IP, Rails bind, and CORS.");
+      setGeneralError("Network error. Could not reach backend. Check LAN IP, Rails bind, and CORS.");
     }
   };
 
@@ -327,25 +587,40 @@ export default function SignUpScreen() {
                 <Text style={styles.title}>Sign Up</Text>
                 <Text style={styles.subtitle}>Create your account</Text>
 
-                {!!inlineError && (
+                {!!generalError && (
                   <View style={styles.errorBox}>
                     <Ionicons name="alert-circle" size={20} color={BRAND.danger} />
-                    <Text style={styles.errorText}>{inlineError}</Text>
+                    <Text style={styles.errorText}>{generalError}</Text>
+                  </View>
+                )}
+
+                {!!inlineSuccess && (
+                  <View style={styles.successBox}>
+                    <Ionicons name="checkmark-circle" size={20} color={BRAND.ok} />
+                    <Text style={styles.successText}>{inlineSuccess}</Text>
                   </View>
                 )}
 
                 <View style={styles.field}>
                   <Text style={styles.label}>First Name</Text>
+
+                  {!!nameError && (
+                    <View style={styles.fieldErrorBox}>
+                      <Ionicons name="alert-circle" size={16} color={BRAND.danger} />
+                      <Text style={styles.fieldErrorText}>{nameError}</Text>
+                    </View>
+                  )}
+
                   <View style={styles.inputRow}>
                     <Ionicons name="person" size={22} color={BRAND.blue} />
                     <TextInput
                       value={firstName}
                       onChangeText={(t) => {
                         setFirstName(t);
-                        if (inlineError) setInlineError(null);
+                        clearFieldErrorsOnEdit("name");
                       }}
                       placeholder="First name"
-                      placeholderTextColor="#98A2B3"
+                      placeholderTextColor="#b3b5b9a8"
                       style={styles.input}
                       editable={!isSigningUp}
                       returnKeyType="next"
@@ -364,10 +639,10 @@ export default function SignUpScreen() {
                       value={lastName}
                       onChangeText={(t) => {
                         setLastName(t);
-                        if (inlineError) setInlineError(null);
+                        clearFieldErrorsOnEdit("name");
                       }}
                       placeholder="Last name"
-                      placeholderTextColor="#98A2B3"
+                      placeholderTextColor="#b3b5b9a8"
                       style={styles.input}
                       editable={!isSigningUp}
                       returnKeyType="next"
@@ -380,16 +655,24 @@ export default function SignUpScreen() {
 
                 <View style={styles.field}>
                   <Text style={styles.label}>Email</Text>
+
+                  {!!emailError && (
+                    <View style={styles.fieldErrorBox}>
+                      <Ionicons name="alert-circle" size={16} color={BRAND.danger} />
+                      <Text style={styles.fieldErrorText}>{emailError}</Text>
+                    </View>
+                  )}
+
                   <View style={styles.inputRow}>
                     <Ionicons name="mail" size={22} color={BRAND.blue} />
                     <TextInput
                       value={email}
                       onChangeText={(t) => {
                         setEmail(t);
-                        if (inlineError) setInlineError(null);
+                        clearFieldErrorsOnEdit("email");
                       }}
                       placeholder="you@example.com"
-                      placeholderTextColor="#98A2B3"
+                      placeholderTextColor="#b3b5b9a8"
                       autoCapitalize="none"
                       keyboardType="email-address"
                       style={styles.input}
@@ -413,36 +696,149 @@ export default function SignUpScreen() {
                 <View style={styles.field}>
                   <Text style={styles.label}>Phone Number</Text>
                   <Text style={styles.helperText}>
-                    We’ll save this to your account for future contact and support.
+                    We’ll text you a 6-digit confirmation code before account creation.
                   </Text>
+
+                  {!!phoneError && (
+                    <View style={styles.fieldErrorBox}>
+                      <Ionicons name="alert-circle" size={16} color={BRAND.danger} />
+                      <Text style={styles.fieldErrorText}>{phoneError}</Text>
+                    </View>
+                  )}
 
                   <View style={styles.inputRow}>
                     <Ionicons name="call" size={22} color={BRAND.blue} />
                     <TextInput
                       value={phone}
-                      onChangeText={(t) => {
-                        setPhone(t);
-                        if (inlineError) setInlineError(null);
-                      }}
+                      onChangeText={handlePhoneChange}
                       placeholder="(555) 555-5555"
-                      placeholderTextColor="#98A2B3"
+                      placeholderTextColor="#b3b5b9a8"
                       keyboardType="phone-pad"
                       style={styles.input}
-                      editable={!isSigningUp}
+                      editable={!isSigningUp && !isSendingCode && !isVerifyingCode}
                       returnKeyType="next"
+                      maxLength={14}
                     />
+                    {phoneVerified ? (
+                      <Ionicons name="checkmark-circle" size={20} color={BRAND.ok} />
+                    ) : digitsOnly(phone).length === 10 ? (
+                      <Ionicons name="phone-portrait-outline" size={20} color={BRAND.blue} />
+                    ) : null}
                   </View>
+
+                  <View style={styles.phoneActionRow}>
+                    <Pressable
+                      onPress={handleSendCode}
+                      disabled={!canSendCode}
+                      style={({ pressed }) => [
+                        styles.smallBtn,
+                        !canSendCode && styles.smallBtnDisabled,
+                        pressed && canSendCode ? { opacity: 0.9 } : null,
+                      ]}
+                    >
+                      <Ionicons
+                        name="chatbox-ellipses"
+                        size={16}
+                        color={canSendCode ? BRAND.blue : BRAND.muted}
+                      />
+                      <Text
+                        style={[
+                          styles.smallBtnText,
+                          !canSendCode && styles.smallBtnTextDisabled,
+                        ]}
+                      >
+                        {isSendingCode
+                          ? "Sending..."
+                          : codeSent
+                          ? cooldown > 0
+                            ? `Resend in ${formatCountdown(cooldown)}`
+                            : "Resend Code"
+                          : "Send Code"}
+                      </Text>
+                    </Pressable>
+
+                    {phoneVerified && (
+                      <View style={styles.verifiedPill}>
+                        <Ionicons name="shield-checkmark" size={14} color={BRAND.ok} />
+                        <Text style={styles.verifiedPillText}>Verified</Text>
+                      </View>
+                    )}
+                  </View>
+
+                  {codeSent && !phoneVerified && (
+                    <View style={styles.verifyWrap}>
+                      <Text style={styles.verifyLabel}>
+                        Enter Code
+                        {maskedPhone ? ` sent to ${maskedPhone}` : ""}
+                      </Text>
+
+                      {!!codeError && (
+                        <View style={styles.fieldErrorBox}>
+                          <Ionicons name="alert-circle" size={16} color={BRAND.danger} />
+                          <Text style={styles.fieldErrorText}>{codeError}</Text>
+                        </View>
+                      )}
+
+                      <View style={styles.inputRow}>
+                        <Ionicons name="key" size={22} color={BRAND.blue} />
+                        <TextInput
+                          value={code}
+                          onChangeText={handleCodeChange}
+                          placeholder="6-digit code"
+                          placeholderTextColor="#b3b5b9a8"
+                          keyboardType="number-pad"
+                          style={styles.input}
+                          editable={!isSigningUp && !isVerifyingCode}
+                          returnKeyType="done"
+                          maxLength={6}
+                          onSubmitEditing={handleVerifyCode}
+                        />
+                      </View>
+
+                      <Pressable
+                        onPress={handleVerifyCode}
+                        disabled={!canVerifyCode}
+                        style={({ pressed }) => [
+                          styles.verifyBtn,
+                          !canVerifyCode && styles.verifyBtnDisabled,
+                          pressed && canVerifyCode ? { opacity: 0.92 } : null,
+                        ]}
+                      >
+                        <Ionicons
+                          name="shield-checkmark"
+                          size={18}
+                          color={canVerifyCode ? "#FFFFFF" : "#98A2B3"}
+                        />
+                        <Text
+                          style={[
+                            styles.verifyBtnText,
+                            !canVerifyCode && styles.verifyBtnTextDisabled,
+                          ]}
+                        >
+                          {isVerifyingCode ? "Verifying..." : "Verify Code"}
+                        </Text>
+                      </Pressable>
+                    </View>
+                  )}
                 </View>
 
                 <View style={styles.field}>
                   <Text style={styles.label}>Password</Text>
+
+                  {!!passwordError && (
+                    <View style={styles.fieldErrorBox}>
+                      <Ionicons name="alert-circle" size={16} color={BRAND.danger} />
+                      <Text style={styles.fieldErrorText}>{passwordError}</Text>
+                    </View>
+                  )}
+
                   <View style={styles.inputRow}>
                     <Ionicons name="lock-closed" size={22} color={BRAND.blue} />
                     <TextInput
                       value={password}
                       onChangeText={(t) => {
                         setPassword(t);
-                        if (inlineError) setInlineError(null);
+                        clearFieldErrorsOnEdit("password");
 
                         if (pwHint !== "hidden" && passwordConfirm) {
                           setPwHint(t === passwordConfirm ? "match" : "mismatch");
@@ -450,7 +846,7 @@ export default function SignUpScreen() {
                       }}
                       secureTextEntry={secure1}
                       placeholder="At least 8 characters"
-                      placeholderTextColor="#98A2B3"
+                      placeholderTextColor="#b3b5b9a8"
                       style={styles.input}
                       editable={!isSigningUp}
                       returnKeyType="next"
@@ -473,12 +869,12 @@ export default function SignUpScreen() {
                       value={passwordConfirm}
                       onChangeText={(t) => {
                         setPasswordConfirm(t);
-                        if (inlineError) setInlineError(null);
+                        clearFieldErrorsOnEdit("password");
                         schedulePwHintCheck(t, 700);
                       }}
                       secureTextEntry={secure2}
                       placeholder="Re-type password"
-                      placeholderTextColor="#98A2B3"
+                      placeholderTextColor="#b3b5b9a8"
                       style={styles.input}
                       editable={!isSigningUp}
                       onSubmitEditing={handleSignUp}
@@ -510,6 +906,22 @@ export default function SignUpScreen() {
                       </Text>
                     </View>
                   )}
+                </View>
+
+                <View style={styles.legalWrap}>
+                  <Text style={styles.legalText}>
+                    By signing up, you agree to our{" "}
+                    <Text style={styles.legalLink} onPress={() => openUrl(TERMS_URL)}>
+                      Terms & Conditions
+                    </Text>{" "}
+                    and{" "}
+                    <Text style={styles.legalLink} onPress={() => openUrl(PRIVACY_POLICY_URL)}>
+                      Privacy Policy
+                    </Text>
+                    . You also agree to receive transactional text messages for verification and
+                    support. Message frequency varies. Message and data rates may apply. Reply STOP
+                    to opt out and HELP for help.
+                  </Text>
                 </View>
 
                 <Pressable
@@ -649,6 +1061,44 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
 
+  successBox: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+    padding: 12,
+    borderRadius: 14,
+    backgroundColor: BRAND.okSoft,
+    borderWidth: 1,
+    borderColor: "#D1FADF",
+    marginBottom: 10,
+  },
+  successText: {
+    flex: 1,
+    color: BRAND.ok,
+    fontFamily: FONT.medium,
+    fontSize: 14,
+    lineHeight: 18,
+  },
+
+  fieldErrorBox: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    padding: 10,
+    borderRadius: 12,
+    backgroundColor: BRAND.dangerSoft,
+    borderWidth: 1,
+    borderColor: "#FEE4E2",
+    marginTop: 8,
+  },
+  fieldErrorText: {
+    flex: 1,
+    color: BRAND.danger,
+    fontFamily: FONT.medium,
+    fontSize: 13,
+    lineHeight: 17,
+  },
+
   inputRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -669,6 +1119,94 @@ const styles = StyleSheet.create({
     paddingVertical: 0,
   },
 
+  phoneActionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginTop: 12,
+    flexWrap: "wrap",
+  },
+
+  smallBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    borderWidth: 1,
+    borderColor: BRAND.blueBorder,
+    backgroundColor: "#F8FAFC",
+    borderRadius: 999,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+  },
+  smallBtnDisabled: {
+    borderColor: BRAND.border,
+    backgroundColor: "#F8FAFC",
+  },
+  smallBtnText: {
+    color: BRAND.blue,
+    fontFamily: FONT.medium,
+    fontSize: 13,
+  },
+  smallBtnTextDisabled: {
+    color: BRAND.muted,
+  },
+
+  verifiedPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: BRAND.okSoft,
+    borderWidth: 1,
+    borderColor: "#D1FADF",
+    borderRadius: 999,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+  },
+  verifiedPillText: {
+    color: BRAND.ok,
+    fontFamily: FONT.medium,
+    fontSize: 13,
+  },
+
+  verifyWrap: {
+    marginTop: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: BRAND.blueBorder,
+    backgroundColor: BRAND.blueSoft,
+    borderRadius: 18,
+  },
+
+  verifyLabel: {
+    fontFamily: FONT.medium,
+    color: BRAND.text,
+    fontSize: 13,
+  },
+
+  verifyBtn: {
+    marginTop: 12,
+    backgroundColor: BRAND.blue,
+    borderRadius: 999,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  verifyBtnDisabled: {
+    backgroundColor: "#E4E7EC",
+  },
+  verifyBtnText: {
+    color: "#FFFFFF",
+    fontFamily: FONT.semi,
+    fontSize: 14,
+    letterSpacing: 0.4,
+  },
+  verifyBtnTextDisabled: {
+    color: "#98A2B3",
+  },
+
   matchRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -676,6 +1214,27 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   matchText: { fontFamily: FONT.medium, fontSize: 13 },
+
+  legalWrap: {
+    marginTop: 16,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: BRAND.blueBorder,
+    backgroundColor: BRAND.blueSoft,
+    borderRadius: 16,
+  },
+  legalText: {
+    color: BRAND.muted,
+    fontFamily: FONT.regular,
+    fontSize: 12,
+    lineHeight: 18,
+    textAlign: "center",
+  },
+  legalLink: {
+    color: BRAND.blue,
+    fontFamily: FONT.semi,
+    textDecorationLine: "underline",
+  },
 
   primaryBtn: {
     marginTop: 16,

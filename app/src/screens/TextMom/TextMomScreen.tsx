@@ -82,7 +82,7 @@ export default function TextMomScreen() {
     return <TextMomUserScreen />;
   }
 
-  const MOM_EMAIL = "elijah@momscomputer.com";
+  const MOM_EMAIL = "support@momscomputer.com";
 
   const template = `Hey Mom — can you take a look at this? I’m not sure if it’s legit:\n\n[PASTE HERE]\n\nI’m here with you. Take your time and email me what you’re seeing.`;
 

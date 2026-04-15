@@ -20,7 +20,7 @@ if (__DEV__ === false && USE_LOCAL_API) {
   throw new Error("USE_LOCAL_API is enabled in a non-dev build");
 }
 
-console.log("API BASE (http.ts)", API_BASE);
+// console.log("API BASE (http.ts)", API_BASE);
 
 async function parseJson(res: Response) {
   const text = await res.text();

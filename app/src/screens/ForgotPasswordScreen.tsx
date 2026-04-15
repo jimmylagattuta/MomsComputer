@@ -31,6 +31,7 @@ const BRAND = {
     blueSoft: "#F3F7FF",
     blueBorder: "#D6E6FF",
     inputBg: "#FFFFFF",
+    placeholder: "#b3b5b9a8",
     ok: "#039855",
     okSoft: "#ECFDF3",
 };
@@ -323,6 +324,7 @@ export default function ForgotPasswordScreen() {
                                                 }
                                             }}
                                             placeholder="you@example.com"
+                                            placeholderTextColor={BRAND.placeholder}
                                             autoCapitalize="none"
                                             autoCorrect={false}
                                             autoComplete="off"

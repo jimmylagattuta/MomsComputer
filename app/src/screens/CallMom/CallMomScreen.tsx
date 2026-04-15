@@ -27,6 +27,8 @@ const BRAND = {
   blueSoft: "#F3F7FF",
   blueBorder: "#D6E6FF",
   green: "#16A34A",
+  greenSoft: "#F0FDF4",
+  greenBorder: "#BBF7D0",
   red: "#DC2626",
   redSoft: "#FEF2F2",
   redBorder: "#FECACA",
@@ -68,6 +70,7 @@ export default function CallMomScreen() {
   const [lastResponseDebug, setLastResponseDebug] = useState<any>(null);
   const [lastErrorDebug, setLastErrorDebug] = useState<any>(null);
   const [debugLines, setDebugLines] = useState<string[]>([]);
+  const [showDebug, setShowDebug] = useState(false);
 
   const titleStyle = useMemo(
     () => [styles.title, isNarrow && styles.titleNarrow],
@@ -101,12 +104,12 @@ export default function CallMomScreen() {
     addDebugLine("Start Call button tapped");
 
     Alert.alert(
-      "Call Mom?",
-      "We’ll contact support and start the call flow for you.",
+      "Call Mom",
+      "We will contact support and call you as soon as possible.",
       [
         { text: "Cancel", style: "cancel" },
         {
-          text: "Start Call",
+          text: "Call Me",
           style: "default",
           onPress: async () => {
             try {
@@ -133,10 +136,10 @@ export default function CallMomScreen() {
                 };
 
                 setLastErrorDebug(notSignedInDebug);
-                setLastMessage("Blocked before request: SecureStore auth_token is missing.");
+                setLastMessage("Please sign in again, then try calling support.");
                 addDebugLine("Blocked before request because SecureStore token was missing");
 
-                Alert.alert("Not signed in", "Please sign in again and try once more.");
+                Alert.alert("Please Sign In", "Please sign in again, then try once more.");
                 return;
               }
 
@@ -161,21 +164,21 @@ export default function CallMomScreen() {
               const backendMessage =
                 response?.json?.message ||
                 response?.json?.error ||
-                "Support call started.";
+                "We are starting your support call now. Please watch for an incoming call.";
 
               if (!response?.ok) {
                 setLastMessage(backendMessage);
                 setLastErrorDebug(response);
                 addDebugLine(`Backend returned non-ok response: ${backendMessage}`);
-                Alert.alert("Unable to start call", backendMessage);
+                Alert.alert("Unable to Start Call", backendMessage);
                 return;
               }
 
               setLastMessage(backendMessage);
 
               Alert.alert(
-                "Call started",
-                backendMessage || "Support call started. Please watch for the incoming call."
+                "We’re Calling You",
+                backendMessage || "Please watch for an incoming call."
               );
             } catch (error: any) {
               const errorDebug = {
@@ -189,12 +192,12 @@ export default function CallMomScreen() {
 
               const message =
                 error?.message ||
-                "We couldn’t start the support call. Please try again.";
+                "We could not start the call right now. Please try again.";
 
               addDebugLine(`Caught frontend error: ${message}`);
 
               setLastMessage(message);
-              Alert.alert("Unable to start call", message);
+              Alert.alert("Unable to Start Call", message);
             } finally {
               setIsCalling(false);
               addDebugLine("Call attempt finished");
@@ -212,6 +215,8 @@ export default function CallMomScreen() {
           <Pressable
             onPress={() => router.back()}
             style={({ pressed }) => [styles.backBtn, pressed && styles.backBtnPressed]}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
           >
             <Ionicons name="chevron-back" size={20} color={BRAND.blue} />
             <Text style={styles.backText}>Back</Text>
@@ -225,114 +230,143 @@ export default function CallMomScreen() {
         >
           <View style={styles.heroCard}>
             <View style={styles.heroIconWrap}>
-              <Ionicons name="call" size={30} color={BRAND.blue} />
+              <Ionicons name="call" size={32} color={BRAND.blue} />
             </View>
 
-            <Text style={titleStyle}>Call Mom</Text>
+            <Text style={titleStyle}>Need help right now?</Text>
 
             <Text style={styles.heroText}>
-              If something feels suspicious, strange, or urgent, don’t wait around.
-              We’ll start the support call flow for you.
+              Tap the button below and we will try to call you.
+            </Text>
+
+            <Text style={styles.heroSubtext}>
+              This is for anything that feels suspicious, confusing, or urgent.
+            </Text>
+          </View>
+
+          <View style={styles.reassuranceCard}>
+            <View style={styles.reassuranceHeader}>
+              <Ionicons name="shield-checkmark" size={20} color={BRAND.green} />
+              <Text style={styles.reassuranceTitle}>You are not alone</Text>
+            </View>
+
+            <Text style={styles.reassuranceText}>
+              Once you tap the button, our team will begin reaching out to you.
             </Text>
           </View>
 
           <View style={styles.infoCard}>
             <Text style={styles.sectionTitle}>What happens next</Text>
 
-            <View style={styles.bulletRow}>
-              <Ionicons name="checkmark-circle" size={18} color={BRAND.green} />
-              <Text style={styles.bulletText}>Your subscription and call availability are checked.</Text>
+            <View style={styles.stepRow}>
+              <View style={styles.stepBadge}>
+                <Text style={styles.stepBadgeText}>1</Text>
+              </View>
+              <Text style={styles.stepText}>Tap “Call Me.”</Text>
             </View>
 
-            <View style={styles.bulletRow}>
-              <Ionicons name="checkmark-circle" size={18} color={BRAND.green} />
-              <Text style={styles.bulletText}>A support call session is created in the backend.</Text>
+            <View style={styles.stepRow}>
+              <View style={styles.stepBadge}>
+                <Text style={styles.stepBadgeText}>2</Text>
+              </View>
+              <Text style={styles.stepText}>Keep your phone nearby.</Text>
             </View>
 
-            <View style={styles.bulletRow}>
-              <Ionicons name="checkmark-circle" size={18} color={BRAND.green} />
-              <Text style={styles.bulletText}>Twilio starts the call flow and connects you to support.</Text>
-            </View>
-
-            <View style={styles.bulletRow}>
-              <Ionicons name="checkmark-circle" size={18} color={BRAND.green} />
-              <Text style={styles.bulletText}>You should watch for an incoming call on your phone.</Text>
+            <View style={styles.stepRow}>
+              <View style={styles.stepBadge}>
+                <Text style={styles.stepBadgeText}>3</Text>
+              </View>
+              <Text style={styles.stepText}>Answer the incoming call from support.</Text>
             </View>
           </View>
 
-          <View style={styles.warningCard}>
-            <View style={styles.warningHeader}>
-              <Ionicons name="alert-circle" size={18} color={BRAND.red} />
-              <Text style={styles.warningTitle}>Important</Text>
+          <View style={styles.tipCard}>
+            <View style={styles.tipHeader}>
+              <Ionicons name="information-circle" size={18} color={BRAND.blue} />
+              <Text style={styles.tipTitle}>Helpful tip</Text>
             </View>
 
-            <Text style={styles.warningText}>
-              Do not close the app and do not mute your phone while the call is being started.
+            <Text style={styles.tipText}>
+              Keep this app open and make sure your phone is not on silent.
             </Text>
           </View>
 
           {lastMessage ? (
             <View style={styles.statusCard}>
-              <Ionicons name="information-circle" size={18} color={BRAND.blue} />
+              <Ionicons name="chatbubble-ellipses" size={18} color={BRAND.blue} />
               <Text style={styles.statusText}>{lastMessage}</Text>
             </View>
           ) : null}
 
-          <View style={styles.debugCard}>
-            <View style={styles.debugHeaderRow}>
-              <Text style={styles.debugTitle}>Debug Info</Text>
+          <Pressable
+            onPress={() => setShowDebug((prev) => !prev)}
+            style={({ pressed }) => [
+              styles.debugToggle,
+              pressed && { opacity: 0.85 },
+            ]}
+          >
+            <Text style={styles.debugToggleText}>
+              {showDebug ? "Hide technical details" : "Show technical details"}
+            </Text>
+          </Pressable>
 
-              <Pressable
-                onPress={refreshSecureStoreToken}
-                style={({ pressed }) => [styles.debugRefreshBtn, pressed && { opacity: 0.85 }]}
-              >
-                <Ionicons name="refresh" size={14} color={BRAND.blue} />
-                <Text style={styles.debugRefreshText}>Check Token</Text>
-              </Pressable>
-            </View>
+          {showDebug ? (
+            <View style={styles.debugCard}>
+              <View style={styles.debugHeaderRow}>
+                <Text style={styles.debugTitle}>Technical Details</Text>
 
-            <View style={styles.debugBlock}>
-              <Text style={styles.debugLabel}>SecureStore auth_token</Text>
-              <Text style={styles.debugValue}>{secureStoreTokenPreview}</Text>
-            </View>
+                <Pressable
+                  onPress={refreshSecureStoreToken}
+                  style={({ pressed }) => [styles.debugRefreshBtn, pressed && { opacity: 0.85 }]}
+                >
+                  <Ionicons name="refresh" size={14} color={BRAND.blue} />
+                  <Text style={styles.debugRefreshText}>Check Token</Text>
+                </Pressable>
+              </View>
 
-            <View style={styles.debugBlock}>
-              <Text style={styles.debugLabel}>Auth keys</Text>
-              <Text style={styles.debugValue}>{authKeys.join(", ") || "(none)"}</Text>
-            </View>
+              <View style={styles.debugBlock}>
+                <Text style={styles.debugLabel}>SecureStore auth_token</Text>
+                <Text style={styles.debugValue}>{secureStoreTokenPreview}</Text>
+              </View>
 
-            <View style={styles.debugBlock}>
-              <Text style={styles.debugLabel}>Auth user snapshot</Text>
-              <Text style={styles.debugMono}>{safeStringify(user ?? null)}</Text>
-            </View>
+              <View style={styles.debugBlock}>
+                <Text style={styles.debugLabel}>Auth keys</Text>
+                <Text style={styles.debugValue}>{authKeys.join(", ") || "(none)"}</Text>
+              </View>
 
-            <View style={styles.debugBlock}>
-              <Text style={styles.debugLabel}>Button press count</Text>
-              <Text style={styles.debugValue}>{String(buttonPressCount)}</Text>
-            </View>
+              <View style={styles.debugBlock}>
+                <Text style={styles.debugLabel}>Auth user snapshot</Text>
+                <Text style={styles.debugMono}>{safeStringify(user ?? null)}</Text>
+              </View>
 
-            <View style={styles.debugBlock}>
-              <Text style={styles.debugLabel}>Last request</Text>
-              <Text style={styles.debugMono}>{safeStringify(lastRequestDebug)}</Text>
-            </View>
+              <View style={styles.debugBlock}>
+                <Text style={styles.debugLabel}>Button press count</Text>
+                <Text style={styles.debugValue}>{String(buttonPressCount)}</Text>
+              </View>
 
-            <View style={styles.debugBlock}>
-              <Text style={styles.debugLabel}>Last response</Text>
-              <Text style={styles.debugMono}>{safeStringify(lastResponseDebug)}</Text>
-            </View>
+              <View style={styles.debugBlock}>
+                <Text style={styles.debugLabel}>Last request</Text>
+                <Text style={styles.debugMono}>{safeStringify(lastRequestDebug)}</Text>
+              </View>
 
-            <View style={styles.debugBlock}>
-              <Text style={styles.debugLabel}>Last error</Text>
-              <Text style={styles.debugMono}>{safeStringify(lastErrorDebug)}</Text>
-            </View>
+              <View style={styles.debugBlock}>
+                <Text style={styles.debugLabel}>Last response</Text>
+                <Text style={styles.debugMono}>{safeStringify(lastResponseDebug)}</Text>
+              </View>
 
-            <View style={styles.debugBlock}>
-              <Text style={styles.debugLabel}>Event log</Text>
-              <Text style={styles.debugMono}>
-                {debugLines.length ? debugLines.join("\n") : "No debug events yet."}
-              </Text>
+              <View style={styles.debugBlock}>
+                <Text style={styles.debugLabel}>Last error</Text>
+                <Text style={styles.debugMono}>{safeStringify(lastErrorDebug)}</Text>
+              </View>
+
+              <View style={styles.debugBlock}>
+                <Text style={styles.debugLabel}>Event log</Text>
+                <Text style={styles.debugMono}>
+                  {debugLines.length ? debugLines.join("\n") : "No debug events yet."}
+                </Text>
+              </View>
             </View>
-          </View>
+          ) : null}
         </ScrollView>
 
         <View style={styles.footer}>
@@ -344,19 +378,25 @@ export default function CallMomScreen() {
               pressed && !isCalling && styles.callBtnPressed,
               isCalling && styles.callBtnDisabled,
             ]}
+            accessibilityRole="button"
+            accessibilityLabel={isCalling ? "Starting your call" : "Call me now"}
           >
             {isCalling ? (
               <>
                 <ActivityIndicator size="small" color="#FFFFFF" />
-                <Text style={styles.callBtnText}>Starting Call…</Text>
+                <Text style={styles.callBtnText}>Calling You…</Text>
               </>
             ) : (
               <>
-                <Ionicons name="call" size={20} color="#FFFFFF" />
-                <Text style={styles.callBtnText}>Start Call</Text>
+                <Ionicons name="call" size={22} color="#FFFFFF" />
+                <Text style={styles.callBtnText}>Call Me Now</Text>
               </>
             )}
           </Pressable>
+
+          <Text style={styles.footerNote}>
+            Need help fast? Tap the button and keep your phone close.
+          </Text>
         </View>
       </View>
     </SafeAreaView>
@@ -391,8 +431,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
-    paddingVertical: 8,
-    paddingHorizontal: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
     borderRadius: 999,
     backgroundColor: BRAND.blueSoft,
     borderWidth: 1,
@@ -407,54 +447,92 @@ const styles = StyleSheet.create({
   backText: {
     color: BRAND.blue,
     fontFamily: FONT.medium,
-    fontSize: 14,
+    fontSize: 15,
   },
 
   content: {
     paddingTop: 6,
-    paddingBottom: 20,
-    gap: 14,
+    paddingBottom: 24,
+    gap: 16,
   },
 
   heroCard: {
-    borderRadius: 22,
+    borderRadius: 24,
     borderWidth: 1,
     borderColor: BRAND.border,
     backgroundColor: "#FFFFFF",
-    padding: 18,
+    padding: 22,
     shadowColor: "#000",
     shadowOpacity: 0.06,
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 6 },
     elevation: 2,
+    alignItems: "flex-start",
   },
 
   heroIconWrap: {
-    width: 52,
-    height: 52,
+    width: 58,
+    height: 58,
     borderRadius: 999,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: BRAND.blueSoft,
     borderWidth: 1,
     borderColor: BRAND.blueBorder,
-    marginBottom: 12,
+    marginBottom: 14,
   },
 
   title: {
     color: BRAND.text,
     fontFamily: FONT.medium,
-    fontSize: 28,
-    letterSpacing: 0.5,
+    fontSize: 30,
+    lineHeight: 36,
   },
 
   titleNarrow: {
-    fontSize: 24,
+    fontSize: 26,
+    lineHeight: 32,
   },
 
   heroText: {
+    marginTop: 12,
+    color: BRAND.text,
+    fontFamily: FONT.medium,
+    fontSize: 20,
+    lineHeight: 28,
+  },
+
+  heroSubtext: {
     marginTop: 10,
     color: BRAND.muted,
+    fontFamily: FONT.regular,
+    fontSize: 16,
+    lineHeight: 24,
+  },
+
+  reassuranceCard: {
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: BRAND.greenBorder,
+    backgroundColor: BRAND.greenSoft,
+    padding: 18,
+    gap: 10,
+  },
+
+  reassuranceHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+
+  reassuranceTitle: {
+    color: BRAND.green,
+    fontFamily: FONT.medium,
+    fontSize: 17,
+  },
+
+  reassuranceText: {
+    color: "#166534",
     fontFamily: FONT.regular,
     fontSize: 15,
     lineHeight: 22,
@@ -466,55 +544,72 @@ const styles = StyleSheet.create({
     borderColor: BRAND.border,
     backgroundColor: "#FFFFFF",
     padding: 18,
-    gap: 12,
+    gap: 14,
   },
 
   sectionTitle: {
     color: BRAND.text,
     fontFamily: FONT.medium,
-    fontSize: 18,
+    fontSize: 20,
   },
 
-  bulletRow: {
+  stepRow: {
     flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 10,
+    alignItems: "center",
+    gap: 12,
   },
 
-  bulletText: {
+  stepBadge: {
+    width: 32,
+    height: 32,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: BRAND.blueSoft,
+    borderWidth: 1,
+    borderColor: BRAND.blueBorder,
+  },
+
+  stepBadgeText: {
+    color: BRAND.blue,
+    fontFamily: FONT.medium,
+    fontSize: 15,
+  },
+
+  stepText: {
     flex: 1,
-    color: BRAND.muted,
+    color: BRAND.text,
     fontFamily: FONT.regular,
-    fontSize: 14,
-    lineHeight: 20,
+    fontSize: 16,
+    lineHeight: 22,
   },
 
-  warningCard: {
+  tipCard: {
     borderRadius: 22,
     borderWidth: 1,
-    borderColor: BRAND.redBorder,
-    backgroundColor: BRAND.redSoft,
+    borderColor: BRAND.blueBorder,
+    backgroundColor: BRAND.blueSoft,
     padding: 18,
     gap: 10,
   },
 
-  warningHeader: {
+  tipHeader: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
   },
 
-  warningTitle: {
-    color: BRAND.red,
+  tipTitle: {
+    color: BRAND.blue,
     fontFamily: FONT.medium,
     fontSize: 16,
   },
 
-  warningText: {
-    color: "#7F1D1D",
+  tipText: {
+    color: BRAND.text,
     fontFamily: FONT.regular,
-    fontSize: 14,
-    lineHeight: 20,
+    fontSize: 15,
+    lineHeight: 22,
   },
 
   statusCard: {
@@ -532,8 +627,24 @@ const styles = StyleSheet.create({
     flex: 1,
     color: BRAND.blue,
     fontFamily: FONT.medium,
-    fontSize: 14,
-    lineHeight: 20,
+    fontSize: 15,
+    lineHeight: 22,
+  },
+
+  debugToggle: {
+    alignSelf: "center",
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: BRAND.border,
+    backgroundColor: "#FFFFFF",
+  },
+
+  debugToggleText: {
+    color: BRAND.muted,
+    fontFamily: FONT.medium,
+    fontSize: 13,
   },
 
   debugCard: {
@@ -603,16 +714,17 @@ const styles = StyleSheet.create({
   },
 
   footer: {
-    paddingTop: 10,
+    paddingTop: 12,
     paddingBottom: 16,
     borderTopWidth: 1,
     borderTopColor: "#EEF2F7",
     backgroundColor: BRAND.screenBg,
+    gap: 10,
   },
 
   callBtn: {
-    minHeight: 56,
-    borderRadius: 18,
+    minHeight: 62,
+    borderRadius: 20,
     backgroundColor: BRAND.blue,
     alignItems: "center",
     justifyContent: "center",
@@ -633,7 +745,16 @@ const styles = StyleSheet.create({
   callBtnText: {
     color: "#FFFFFF",
     fontFamily: FONT.medium,
-    fontSize: 17,
-    letterSpacing: 0.3,
+    fontSize: 20,
+    letterSpacing: 0.2,
+  },
+
+  footerNote: {
+    textAlign: "center",
+    color: BRAND.muted,
+    fontFamily: FONT.regular,
+    fontSize: 13,
+    lineHeight: 18,
+    paddingHorizontal: 10,
   },
 });

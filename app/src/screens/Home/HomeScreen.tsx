@@ -556,6 +556,12 @@ export default function HomeScreen() {
     });
   };
 
+  const handleOpenProfile = () => {
+    if (isLoggingOut) return;
+    setSettingsOpen(false);
+    router.push("/(app)/profile");
+  };
+
   const handleOpenSubscription = () => {
     if (isLoggingOut) return;
     setSettingsOpen(false);
@@ -655,6 +661,7 @@ export default function HomeScreen() {
             disabled={isLoggingOut}
             onToggle={() => setSettingsOpen((prev) => !prev)}
             onClose={() => setSettingsOpen(false)}
+            onOpenProfile={handleOpenProfile}
             onOpenSubscription={handleOpenSubscription}
             onChangePassword={handleGoToChangePassword}
             onLogout={handleLogout}

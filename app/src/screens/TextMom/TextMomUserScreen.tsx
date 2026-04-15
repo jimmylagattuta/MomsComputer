@@ -128,10 +128,10 @@ function formatMetaTime(iso?: string | null) {
 function getThreadSortTime(
   thread?:
     | {
-        last_message_at?: string | null;
-        started_at?: string | null;
-        created_at?: string | null;
-      }
+      last_message_at?: string | null;
+      started_at?: string | null;
+      created_at?: string | null;
+    }
     | null
 ) {
   const raw =
@@ -146,10 +146,10 @@ function getThreadSortTime(
 function isThreadRecent(
   thread?:
     | {
-        last_message_at?: string | null;
-        started_at?: string | null;
-        created_at?: string | null;
-      }
+      last_message_at?: string | null;
+      started_at?: string | null;
+      created_at?: string | null;
+    }
     | null
 ) {
   const ts = getThreadSortTime(thread);
@@ -611,8 +611,8 @@ export default function TextMomUserScreen() {
       const mostRecentThread =
         rows && rows.length
           ? [...rows].sort(
-              (a, b) => getThreadSortTime(b as any) - getThreadSortTime(a as any)
-            )[0]
+            (a, b) => getThreadSortTime(b as any) - getThreadSortTime(a as any)
+          )[0]
           : null;
 
       if (mostRecentThread && isThreadRecent(mostRecentThread as any)) {
@@ -831,34 +831,105 @@ export default function TextMomUserScreen() {
     })();
   }, [deepLinkThreadId, handleSelectThread, isBooting]);
 
-  const pickImages = async () => {
+  const addPickedImages = (nextImages: UiImage[]) => {
+    setPickedImages((prev) => {
+      const merged = [...prev];
+
+      for (const img of nextImages) {
+        if (merged.some((m) => m.uri === img.uri)) continue;
+        if (merged.length >= 4) break;
+        merged.push(img);
+      }
+
+      return merged.slice(0, 4);
+    });
+  };
+
+  const openCamera = async () => {
+    try {
+      if (pickedImages.length >= 4) {
+        Alert.alert("Image limit", "Maximum of 4 images.");
+        return;
+      }
+
+      const permission = await ImagePicker.requestCameraPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert("Permission needed", "Allow camera access.");
+        return;
+      }
+
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ["images"],
+        quality: 0.82,
+        cameraType: ImagePicker.CameraType.back,
+      });
+
+      if (result.canceled) return;
+
+      const nextImages: UiImage[] = result.assets.map((asset, index) => ({
+        uri: asset.uri,
+        name: asset.fileName || `textmom-camera-${Date.now()}-${index}.jpg`,
+        type: asset.mimeType || "image/jpeg",
+      }));
+
+      addPickedImages(nextImages);
+    } catch (e) {
+      console.log("TEXT MOM CAMERA PICK FAILED", e);
+      Alert.alert("Couldn’t open camera", "Please try again.");
+    }
+  };
+
+  const openPhotoLibrary = async () => {
+    try {
+      if (pickedImages.length >= 4) {
+        Alert.alert("Image limit", "Maximum of 4 images.");
+        return;
+      }
+
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert("Permission needed", "Allow photo access.");
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        allowsMultipleSelection: true,
+        selectionLimit: 4 - pickedImages.length,
+        quality: 0.82,
+      });
+
+      if (result.canceled) return;
+
+      const nextImages: UiImage[] = result.assets.map((asset, index) => ({
+        uri: asset.uri,
+        name: asset.fileName || `textmom-${Date.now()}-${index}.jpg`,
+        type: asset.mimeType || "image/jpeg",
+      }));
+
+      addPickedImages(nextImages);
+    } catch (e) {
+      console.log("TEXT MOM IMAGE PICK FAILED", e);
+      Alert.alert("Couldn’t open photos", "Please try again.");
+    }
+  };
+
+  const pickImages = () => {
     if (pickedImages.length >= 4) {
       Alert.alert("Image limit", "Maximum of 4 images.");
       return;
     }
 
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) {
-      Alert.alert("Permission needed", "Allow photo access.");
-      return;
-    }
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ["images"],
-      allowsMultipleSelection: true,
-      selectionLimit: 4 - pickedImages.length,
-      quality: 0.82,
-    });
-
-    if (result.canceled) return;
-
-    const nextImages: UiImage[] = result.assets.map((asset, index) => ({
-      uri: asset.uri,
-      name: asset.fileName || `textmom-${Date.now()}-${index}.jpg`,
-      type: asset.mimeType || "image/jpeg",
-    }));
-
-    setPickedImages((prev) => [...prev, ...nextImages].slice(0, 4));
+    Alert.alert(
+      "Add image",
+      "Choose how you want to attach an image.",
+      [
+        { text: "Open Camera", onPress: openCamera },
+        { text: "Choose from Photos", onPress: openPhotoLibrary },
+        { text: "Cancel", style: "cancel" },
+      ],
+      { cancelable: true }
+    );
   };
 
   const handleSend = async () => {
@@ -1021,8 +1092,8 @@ export default function TextMomUserScreen() {
           system
             ? styles.messageRowSystem
             : mine
-            ? styles.messageRowMine
-            : styles.messageRowTheirs,
+              ? styles.messageRowMine
+              : styles.messageRowTheirs,
         ]}
       >
         <View
@@ -1031,8 +1102,8 @@ export default function TextMomUserScreen() {
             system
               ? styles.messageBubbleSystem
               : mine
-              ? styles.messageBubbleMine
-              : styles.messageBubbleTheirs,
+                ? styles.messageBubbleMine
+                : styles.messageBubbleTheirs,
           ]}
         >
           {system ? (
@@ -1057,8 +1128,8 @@ export default function TextMomUserScreen() {
                 system
                   ? styles.messageTextSystem
                   : mine
-                  ? styles.messageTextMine
-                  : styles.messageTextTheirs,
+                    ? styles.messageTextMine
+                    : styles.messageTextTheirs,
               ]}
             >
               {item.body}
