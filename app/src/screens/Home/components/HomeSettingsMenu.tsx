@@ -1,9 +1,20 @@
 import { Ionicons } from "@expo/vector-icons";
-import React from "react";
-import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import React, { useState } from "react";
+import {
+  Linking,
+  Modal,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { FONT } from "../../../../src/theme";
 
 const IS_ANDROID = Platform.OS === "android";
+
+const TERMS_URL = "https://momscomputer.com/terms/";
+const PRIVACY_URL = "https://momscomputer.com/privacy/";
 
 const BRAND = {
   border: "#D7DEE8",
@@ -18,6 +29,11 @@ const BRAND = {
   dangerText: "#C62828",
 };
 
+type ExternalLinkTarget = {
+  label: string;
+  url: string;
+};
+
 type HomeSettingsMenuProps = {
   open: boolean;
   disabled?: boolean;
@@ -27,6 +43,7 @@ type HomeSettingsMenuProps = {
   onOpenSubscription: () => void;
   onChangePassword: () => void;
   onLogout: () => void;
+  onOpenNotifications?: () => void;
 };
 
 export default function HomeSettingsMenu({
@@ -38,7 +55,42 @@ export default function HomeSettingsMenu({
   onOpenSubscription,
   onChangePassword,
   onLogout,
+  onOpenNotifications,
 }: HomeSettingsMenuProps) {
+  const [externalLinkTarget, setExternalLinkTarget] =
+    useState<ExternalLinkTarget | null>(null);
+
+  const handleOpenExternalConfirm = (target: ExternalLinkTarget) => {
+    setExternalLinkTarget(target);
+    onClose();
+  };
+
+  const handleCancelExternalLink = () => {
+    setExternalLinkTarget(null);
+  };
+
+  const handleConfirmExternalLink = async () => {
+    if (!externalLinkTarget?.url) return;
+
+    const urlToOpen = externalLinkTarget.url;
+
+    setExternalLinkTarget(null);
+
+    try {
+      await Linking.openURL(urlToOpen);
+    } catch (error) {
+      console.log("Unable to open external link:", error);
+    }
+  };
+
+  const handleOpenNotifications = () => {
+    onClose();
+
+    if (onOpenNotifications) {
+      onOpenNotifications();
+    }
+  };
+
   return (
     <View style={styles.settingsWrap}>
       <Pressable
@@ -96,6 +148,82 @@ export default function HomeSettingsMenu({
             <View style={styles.divider} />
 
             <Pressable
+              onPress={handleOpenNotifications}
+              style={({ pressed }) => [
+                styles.dropdownItem,
+                pressed && styles.dropdownItemPressed,
+              ]}
+            >
+              <Ionicons
+                name="notifications-outline"
+                size={20}
+                color={BRAND.blue}
+              />
+              <View style={styles.textBlock}>
+                <Text style={styles.dropdownItemText}>Notifications</Text>
+                <Text style={styles.dropdownItemSubtext}>
+                  View in-app notifications
+                </Text>
+              </View>
+            </Pressable>
+
+            <View style={styles.divider} />
+
+            <Pressable
+              onPress={() =>
+                handleOpenExternalConfirm({
+                  label: "Privacy Policy",
+                  url: PRIVACY_URL,
+                })
+              }
+              style={({ pressed }) => [
+                styles.dropdownItem,
+                pressed && styles.dropdownItemPressed,
+              ]}
+            >
+              <Ionicons
+                name="shield-checkmark-outline"
+                size={20}
+                color={BRAND.blue}
+              />
+              <View style={styles.textBlock}>
+                <Text style={styles.dropdownItemText}>Privacy Policy</Text>
+                <Text style={styles.dropdownItemSubtext}>
+                  Opens momscomputer.com
+                </Text>
+              </View>
+            </Pressable>
+
+            <View style={styles.divider} />
+
+            <Pressable
+              onPress={() =>
+                handleOpenExternalConfirm({
+                  label: "Terms",
+                  url: TERMS_URL,
+                })
+              }
+              style={({ pressed }) => [
+                styles.dropdownItem,
+                pressed && styles.dropdownItemPressed,
+              ]}
+            >
+              <Ionicons
+                name="document-text-outline"
+                size={20}
+                color={BRAND.blue}
+              />
+              <View style={styles.textBlock}>
+                <Text style={styles.dropdownItemText}>Terms</Text>
+                <Text style={styles.dropdownItemSubtext}>
+                  Opens momscomputer.com
+                </Text>
+              </View>
+            </Pressable>
+
+            <View style={styles.divider} />
+
+            <Pressable
               onPress={onChangePassword}
               style={({ pressed }) => [
                 styles.dropdownItem,
@@ -139,6 +267,54 @@ export default function HomeSettingsMenu({
           </View>
         </>
       )}
+
+      <Modal
+        visible={!!externalLinkTarget}
+        transparent
+        animationType="fade"
+        onRequestClose={handleCancelExternalLink}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalIconWrap}>
+              <Ionicons name="open-outline" size={24} color={BRAND.blue} />
+            </View>
+
+            <Text style={styles.modalTitle}>Open outside the app?</Text>
+
+            <Text style={styles.modalBody}>
+              You are about to leave Mom&apos;s Computer and open{" "}
+              {externalLinkTarget?.label} in your browser.
+            </Text>
+
+            <Text style={styles.modalUrl}>{externalLinkTarget?.url}</Text>
+
+            <View style={styles.modalActions}>
+              <Pressable
+                onPress={handleCancelExternalLink}
+                style={({ pressed }) => [
+                  styles.modalButton,
+                  styles.modalCancelButton,
+                  pressed && styles.modalButtonPressed,
+                ]}
+              >
+                <Text style={styles.modalCancelText}>Cancel</Text>
+              </Pressable>
+
+              <Pressable
+                onPress={handleConfirmExternalLink}
+                style={({ pressed }) => [
+                  styles.modalButton,
+                  styles.modalConfirmButton,
+                  pressed && styles.modalButtonPressed,
+                ]}
+              >
+                <Text style={styles.modalConfirmText}>Continue</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -179,7 +355,7 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: 52,
     right: 0,
-    minWidth: 240,
+    minWidth: 250,
     backgroundColor: "#FFFFFF",
     borderRadius: 16,
     borderWidth: 1,
@@ -238,5 +414,107 @@ const styles = StyleSheet.create({
     fontFamily: FONT.regular,
     fontSize: IS_ANDROID ? 11 : 12,
     lineHeight: IS_ANDROID ? 14 : 15,
+  },
+
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(11, 18, 32, 0.42)",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 22,
+  },
+
+  modalCard: {
+    width: "100%",
+    maxWidth: 360,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: BRAND.border,
+    padding: 20,
+    shadowColor: "#000",
+    shadowOpacity: 0.16,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 10,
+  },
+
+  modalIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: BRAND.blueSoft,
+    borderWidth: 1,
+    borderColor: BRAND.blueBorder,
+    marginBottom: 14,
+  },
+
+  modalTitle: {
+    color: BRAND.text,
+    fontFamily: FONT.medium,
+    fontSize: IS_ANDROID ? 18 : 19,
+    letterSpacing: 0.2,
+  },
+
+  modalBody: {
+    marginTop: 8,
+    color: BRAND.muted,
+    fontFamily: FONT.regular,
+    fontSize: IS_ANDROID ? 13 : 14,
+    lineHeight: IS_ANDROID ? 19 : 20,
+  },
+
+  modalUrl: {
+    marginTop: 12,
+    color: BRAND.blue,
+    fontFamily: FONT.medium,
+    fontSize: IS_ANDROID ? 12 : 13,
+    lineHeight: IS_ANDROID ? 17 : 18,
+  },
+
+  modalActions: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 18,
+  },
+
+  modalButton: {
+    flex: 1,
+    minHeight: 44,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 12,
+  },
+
+  modalCancelButton: {
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: BRAND.border,
+  },
+
+  modalConfirmButton: {
+    backgroundColor: BRAND.blue,
+    borderWidth: 1,
+    borderColor: BRAND.blue,
+  },
+
+  modalButtonPressed: {
+    opacity: 0.88,
+    transform: [{ scale: 0.99 }],
+  },
+
+  modalCancelText: {
+    color: BRAND.text,
+    fontFamily: FONT.medium,
+    fontSize: IS_ANDROID ? 13 : 14,
+  },
+
+  modalConfirmText: {
+    color: "#FFFFFF",
+    fontFamily: FONT.medium,
+    fontSize: IS_ANDROID ? 13 : 14,
   },
 });

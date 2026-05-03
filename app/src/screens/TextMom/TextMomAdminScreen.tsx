@@ -1,7 +1,9 @@
+// app/src/screens/TextMom/TextMomAdminScreen.tsx
 import { Ionicons } from "@expo/vector-icons";
 import type { Cable } from "@rails/actioncable";
 import * as ImagePicker from "expo-image-picker";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
+import * as SecureStore from "expo-secure-store";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -34,6 +36,7 @@ import {
 import { buildCableConsumer } from "../../services/cable/createCable";
 import { subscribeToSupportInbox } from "../../services/cable/supportTextInboxSubscription";
 import { subscribeToSupportTextThread } from "../../services/cable/supportTextThreadSubscription";
+import { clearTextMomUnreadCount } from "../../services/notifications/textMomUnreadBadge";
 import ImagePreviewModal from "../AskMom/components/ImagePreviewModal";
 import { H_PADDING } from "../AskMom/theme";
 import TextMomFooterHomeButton from "./components/TextMomFooterHomeButton";
@@ -53,6 +56,10 @@ const BRAND = {
   blueBorder: "#D6E7FF",
   green: "#16A34A",
   red: "#DC2626",
+  orange: "#EA580C",
+  orangeDark: "#9A3412",
+  orangeSoft: "#FFF7ED",
+  orangeBorder: "#FDBA74",
   bubbleMine: "#1D6FE9",
   bubbleMineText: "#FFFFFF",
   bubbleTheirs: "#FFFFFF",
@@ -65,6 +72,13 @@ const BRAND = {
 
 const FALLBACK_REFRESH_MS = 20 * 60 * 1000;
 const SOCKET_THREAD_REFRESH_DELAY_MS = 500;
+const NEW_ADMIN_MESSAGE_NOTICE_ID = -777777;
+
+// IMPORTANT:
+// SecureStore keys cannot contain ":".
+// This intentionally resets old admin seen state from the earlier key.
+const ADMIN_LAST_SEEN_USER_MESSAGE_KEY_PREFIX =
+  "text_mom_admin_last_seen_user_message_id_v5_";
 
 type UiImage = {
   uri: string;
@@ -75,6 +89,16 @@ type UiImage = {
 type CableSubscription = {
   unsubscribe: () => void;
 };
+
+type AdminRenderableMessage = AdminSupportTextMessage & {
+  noticeKind?: "new_user_messages";
+  noticeCount?: number;
+};
+
+type NewUserNoticeState = {
+  anchorMessageId: number;
+  count: number;
+} | null;
 
 function formatThreadTime(iso?: string | null) {
   if (!iso) return "";
@@ -134,6 +158,65 @@ function mergeMessagesById(
   });
 }
 
+function getAdminLastSeenUserMessageKey(threadId: number) {
+  return `${ADMIN_LAST_SEEN_USER_MESSAGE_KEY_PREFIX}${threadId}`;
+}
+
+function buildNewUserNotice(count: number): AdminRenderableMessage {
+  return {
+    id: NEW_ADMIN_MESSAGE_NOTICE_ID,
+    direction: "system",
+    status: "sent",
+    body: null,
+    created_at: new Date().toISOString(),
+    intro_message: false,
+    author_agent_name: "Mom's Computer",
+    visible_to_user: false,
+    images: [],
+    noticeKind: "new_user_messages",
+    noticeCount: count,
+  } as AdminRenderableMessage;
+}
+
+function getIncomingUserMessages(rows: AdminRenderableMessage[]) {
+  return rows
+    .filter(
+      (m) =>
+        m.id > 0 &&
+        m.direction === "outbound_to_support" &&
+        !m.noticeKind
+    )
+    .sort((a, b) => {
+      const aTime = new Date(a.created_at || 0).getTime();
+      const bTime = new Date(b.created_at || 0).getTime();
+
+      if (aTime !== bTime) return aTime - bTime;
+      return a.id - b.id;
+    });
+}
+
+function insertNewUserNoticeIntoMessages(
+  rows: AdminRenderableMessage[],
+  notice: NewUserNoticeState
+) {
+  if (!notice || !notice.anchorMessageId || notice.count <= 0) {
+    return rows.filter((m) => m.id !== NEW_ADMIN_MESSAGE_NOTICE_ID);
+  }
+
+  const cleanedRows = rows.filter((m) => m.id !== NEW_ADMIN_MESSAGE_NOTICE_ID);
+  const anchorIndex = cleanedRows.findIndex((m) => m.id === notice.anchorMessageId);
+
+  if (anchorIndex < 0) return cleanedRows;
+
+  const noticeRow = buildNewUserNotice(notice.count);
+
+  return [
+    ...cleanedRows.slice(0, anchorIndex),
+    noticeRow,
+    ...cleanedRows.slice(anchorIndex),
+  ];
+}
+
 export default function TextMomAdminScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ threadId?: string | string[] }>();
@@ -150,12 +233,13 @@ export default function TextMomAdminScreen() {
   const footerPaddingBottom = Math.max(insets.bottom, 12) + 10;
   const footerTotalHeight = FOOTER_MIN_HEIGHT + footerPaddingBottom;
 
-  const flatListRef = useRef<FlatList<AdminSupportTextMessage>>(null);
+  const flatListRef = useRef<FlatList<AdminRenderableMessage>>(null);
   const isFetchingThreadsRef = useRef(false);
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
   const selectedThreadIdRef = useRef<number | null>(null);
   const hasInitializedRef = useRef(false);
   const socketRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scrollTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
 
   const cableRef = useRef<Cable | null>(null);
   const inboxSubscriptionRef = useRef<CableSubscription | null>(null);
@@ -165,6 +249,7 @@ export default function TextMomAdminScreen() {
   const inboxSubscribeRunRef = useRef(0);
   const handledDeepLinkThreadIdRef = useRef<number | null>(null);
   const deepLinkInProgressRef = useRef(false);
+  const newUserNoticeRef = useRef<NewUserNoticeState>(null);
 
   const [threads, setThreads] = useState<AdminSupportTextThreadSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -173,7 +258,8 @@ export default function TextMomAdminScreen() {
 
   const [selectedThread, setSelectedThread] =
     useState<AdminSupportTextThreadSummary | null>(null);
-  const [threadMessages, setThreadMessages] = useState<AdminSupportTextMessage[]>([]);
+  const [threadMessages, setThreadMessages] = useState<AdminRenderableMessage[]>([]);
+  const [newUserNotice, setNewUserNotice] = useState<NewUserNoticeState>(null);
   const [threadLoading, setThreadLoading] = useState(false);
   const [threadError, setThreadError] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -182,9 +268,18 @@ export default function TextMomAdminScreen() {
   const [previewUri, setPreviewUri] = useState<string | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
 
+  useEffect(() => {
+    newUserNoticeRef.current = newUserNotice;
+  }, [newUserNotice]);
+
   const unreadCount = useMemo(
     () => threads.filter((t) => t.support_unread).length,
     [threads]
+  );
+
+  const displayThreadMessages = useMemo(
+    () => insertNewUserNoticeIntoMessages(threadMessages, newUserNotice),
+    [threadMessages, newUserNotice]
   );
 
   const titleStyle = useMemo(
@@ -195,6 +290,28 @@ export default function TextMomAdminScreen() {
   const sendDisabled = sending || (!draft.trim() && pickedImages.length === 0);
   const showingThread = !!selectedThread;
 
+  const clearScrollTimers = useCallback(() => {
+    scrollTimersRef.current.forEach((timer) => clearTimeout(timer));
+    scrollTimersRef.current = [];
+  }, []);
+
+  const scrollToBottom = useCallback(
+    (animated = true) => {
+      clearScrollTimers();
+
+      const delays = [40, 140, 320, 650];
+
+      delays.forEach((delay) => {
+        const timer = setTimeout(() => {
+          flatListRef.current?.scrollToEnd({ animated });
+        }, delay);
+
+        scrollTimersRef.current.push(timer);
+      });
+    },
+    [clearScrollTimers]
+  );
+
   const openPreview = useCallback((uri: string) => {
     setPreviewUri(uri);
     setPreviewOpen(true);
@@ -204,6 +321,110 @@ export default function TextMomAdminScreen() {
     setPreviewOpen(false);
     setPreviewUri(null);
   }, []);
+
+  const setNoticeAndMarkSeenForNextVisit = useCallback(
+    async (
+      threadId: number,
+      anchorMessageId: number,
+      count: number,
+      latestId: number
+    ) => {
+      const nextNotice = {
+        anchorMessageId,
+        count,
+      };
+
+      console.log("[TextMomAdmin] SETTING USER MESSAGE BAR", {
+        threadId,
+        nextNotice,
+        latestId,
+      });
+
+      setNewUserNotice(nextNotice);
+      newUserNoticeRef.current = nextNotice;
+
+      scrollToBottom(true);
+
+      try {
+        await SecureStore.setItemAsync(
+          getAdminLastSeenUserMessageKey(threadId),
+          String(latestId)
+        );
+      } catch (error) {
+        console.warn("[TextMomAdmin] failed saving seen user id", error);
+      }
+    },
+    [scrollToBottom]
+  );
+
+  const evaluateNewUserNotice = useCallback(
+    async (threadId: number, rows: AdminRenderableMessage[]) => {
+      try {
+        const incomingUserMessages = getIncomingUserMessages(rows);
+
+        if (!incomingUserMessages.length) {
+          setNewUserNotice(null);
+          newUserNoticeRef.current = null;
+          return;
+        }
+
+        const latestIncomingMessage =
+          incomingUserMessages[incomingUserMessages.length - 1];
+
+        const existingNotice = newUserNoticeRef.current;
+
+        if (existingNotice?.anchorMessageId) {
+          const messagesSinceAnchor = incomingUserMessages.filter(
+            (message) => message.id >= existingNotice.anchorMessageId
+          );
+
+          const nextNotice = {
+            anchorMessageId: existingNotice.anchorMessageId,
+            count: Math.max(messagesSinceAnchor.length, existingNotice.count),
+          };
+
+          setNewUserNotice(nextNotice);
+          newUserNoticeRef.current = nextNotice;
+
+          scrollToBottom(true);
+
+          await SecureStore.setItemAsync(
+            getAdminLastSeenUserMessageKey(threadId),
+            String(latestIncomingMessage.id)
+          );
+
+          return;
+        }
+
+        const key = getAdminLastSeenUserMessageKey(threadId);
+        const rawLastSeen = await SecureStore.getItemAsync(key);
+        const lastSeenId = Number(rawLastSeen || 0);
+        const safeLastSeenId = Number.isFinite(lastSeenId) ? lastSeenId : 0;
+
+        const newMessages = incomingUserMessages.filter(
+          (message) => message.id > safeLastSeenId
+        );
+
+        if (!newMessages.length) {
+          setNewUserNotice(null);
+          newUserNoticeRef.current = null;
+          return;
+        }
+
+        await setNoticeAndMarkSeenForNextVisit(
+          threadId,
+          newMessages[0].id,
+          newMessages.length,
+          latestIncomingMessage.id
+        );
+      } catch (error) {
+        console.warn("[TextMomAdmin] new user notice check failed", error);
+        setNewUserNotice(null);
+        newUserNoticeRef.current = null;
+      }
+    },
+    [scrollToBottom, setNoticeAndMarkSeenForNextVisit]
+  );
 
   const mergeThreadIntoInbox = useCallback(
     (incomingThread: AdminSupportTextThreadSummary) => {
@@ -237,9 +458,50 @@ export default function TextMomAdminScreen() {
         }
       }
 
-      setThreadMessages((prev) => mergeMessagesById([...prev, incomingMessage]));
+      setThreadMessages((prev) => {
+        const nextMessages = mergeMessagesById([
+          ...prev,
+          incomingMessage,
+        ]) as AdminRenderableMessage[];
+
+        const activeThreadId =
+          incomingThread?.id || selectedThreadIdRef.current || null;
+
+        if (
+          activeThreadId &&
+          incomingMessage.direction === "outbound_to_support"
+        ) {
+          const existingNotice = newUserNoticeRef.current;
+
+          if (existingNotice?.anchorMessageId) {
+            const incomingUserMessages = getIncomingUserMessages(nextMessages);
+
+            const messagesSinceAnchor = incomingUserMessages.filter(
+              (message) => message.id >= existingNotice.anchorMessageId
+            );
+
+            void setNoticeAndMarkSeenForNextVisit(
+              activeThreadId,
+              existingNotice.anchorMessageId,
+              Math.max(messagesSinceAnchor.length, existingNotice.count),
+              incomingMessage.id
+            );
+          } else {
+            void setNoticeAndMarkSeenForNextVisit(
+              activeThreadId,
+              incomingMessage.id,
+              1,
+              incomingMessage.id
+            );
+          }
+        }
+
+        return nextMessages;
+      });
+
+      scrollToBottom(true);
     },
-    [mergeThreadIntoInbox]
+    [mergeThreadIntoInbox, scrollToBottom, setNoticeAndMarkSeenForNextVisit]
   );
 
   const ensureCable = useCallback(async () => {
@@ -328,11 +590,16 @@ export default function TextMomAdminScreen() {
           fetchAdminSupportMessages(threadId),
         ]);
 
+        const nextMessages = mergeMessagesById(messageRows) as AdminRenderableMessage[];
+
         setSelectedThread(threadRow);
         selectedThreadIdRef.current = threadRow.id;
-        setThreadMessages(mergeMessagesById(messageRows));
+        setThreadMessages(nextMessages);
+
+        void evaluateNewUserNotice(threadRow.id, nextMessages);
 
         mergeThreadIntoInbox(threadRow);
+        scrollToBottom(true);
 
         return true;
       } catch (e: any) {
@@ -344,19 +611,22 @@ export default function TextMomAdminScreen() {
         if (!silent) setThreadLoading(false);
       }
     },
-    [mergeThreadIntoInbox]
+    [evaluateNewUserNotice, mergeThreadIntoInbox, scrollToBottom]
   );
 
-  const scheduleSelectedThreadRefresh = useCallback((threadId: number) => {
-    if (socketRefreshTimerRef.current) {
-      clearTimeout(socketRefreshTimerRef.current);
-    }
+  const scheduleSelectedThreadRefresh = useCallback(
+    (threadId: number) => {
+      if (socketRefreshTimerRef.current) {
+        clearTimeout(socketRefreshTimerRef.current);
+      }
 
-    socketRefreshTimerRef.current = setTimeout(() => {
-      if (selectedThreadIdRef.current !== threadId) return;
-      void loadSelectedThread(threadId, { silent: true });
-    }, SOCKET_THREAD_REFRESH_DELAY_MS);
-  }, [loadSelectedThread]);
+      socketRefreshTimerRef.current = setTimeout(() => {
+        if (selectedThreadIdRef.current !== threadId) return;
+        void loadSelectedThread(threadId, { silent: true });
+      }, SOCKET_THREAD_REFRESH_DELAY_MS);
+    },
+    [loadSelectedThread]
+  );
 
   const refreshAdminSafely = useCallback(async () => {
     try {
@@ -468,13 +738,19 @@ export default function TextMomAdminScreen() {
         }
       }
     },
-    [appendAdminLiveMessage, ensureCable, loadSelectedThread, scheduleSelectedThreadRefresh]
+    [
+      appendAdminLiveMessage,
+      ensureCable,
+      loadSelectedThread,
+      scheduleSelectedThreadRefresh,
+    ]
   );
 
   const handleSelectThread = useCallback(
     async (threadId: number) => {
       if (selectedThreadIdRef.current === threadId && selectedThread) {
         await subscribeSelectedThread(threadId);
+        scrollToBottom(false);
         return;
       }
 
@@ -482,6 +758,8 @@ export default function TextMomAdminScreen() {
         id: threadId,
       } as AdminSupportTextThreadSummary);
       selectedThreadIdRef.current = threadId;
+      setNewUserNotice(null);
+      newUserNoticeRef.current = null;
 
       setThreads((prev) =>
         prev.map((t) =>
@@ -499,9 +777,10 @@ export default function TextMomAdminScreen() {
 
       if (loaded) {
         await subscribeSelectedThread(threadId);
+        scrollToBottom(false);
       }
     },
-    [loadSelectedThread, selectedThread, subscribeSelectedThread]
+    [loadSelectedThread, scrollToBottom, selectedThread, subscribeSelectedThread]
   );
 
   useEffect(() => {
@@ -538,14 +817,18 @@ export default function TextMomAdminScreen() {
       socketRefreshTimerRef.current = null;
     }
 
+    clearScrollTimers();
+
     setSelectedThread(null);
     selectedThreadIdRef.current = null;
+    setNewUserNotice(null);
+    newUserNoticeRef.current = null;
     setThreadMessages([]);
     setThreadError(null);
     setThreadLoading(false);
     setDraft("");
     setPickedImages([]);
-  }, [cleanupSelectedThreadSubscription]);
+  }, [cleanupSelectedThreadSubscription, clearScrollTimers]);
 
   const addPickedImages = useCallback((nextImages: UiImage[]) => {
     setPickedImages((prev) => {
@@ -668,14 +951,21 @@ export default function TextMomAdminScreen() {
         imagesToSend
       );
 
-      setThreadMessages((prev) => mergeMessagesById([...prev, created]));
+      setNewUserNotice(null);
+      newUserNoticeRef.current = null;
+
+      setThreadMessages((prev) =>
+        mergeMessagesById([...prev, created]) as AdminRenderableMessage[]
+      );
+
+      scrollToBottom(true);
       await loadThreads("silent");
     } catch (e: any) {
       Alert.alert("Send failed", e?.message || "Unable to send reply.");
     } finally {
       setSending(false);
     }
-  }, [draft, pickedImages, sending, loadThreads]);
+  }, [draft, pickedImages, sending, loadThreads, scrollToBottom]);
 
   useEffect(() => {
     if (hasInitializedRef.current) return;
@@ -687,6 +977,8 @@ export default function TextMomAdminScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      void clearTextMomUnreadCount();
+
       void loadThreads("silent");
 
       if (selectedThreadIdRef.current) {
@@ -714,7 +1006,8 @@ export default function TextMomAdminScreen() {
       "change",
       (nextState: AppStateStatus) => {
         const wasBackgrounded =
-          appStateRef.current === "inactive" || appStateRef.current === "background";
+          appStateRef.current === "inactive" ||
+          appStateRef.current === "background";
 
         appStateRef.current = nextState;
 
@@ -733,19 +1026,15 @@ export default function TextMomAdminScreen() {
   }, [loadSelectedThread, loadThreads, subscribeSelectedThread]);
 
   useEffect(() => {
-    if (!threadMessages.length) return;
-
-    const timer = setTimeout(() => {
-      flatListRef.current?.scrollToEnd({ animated: true });
-    }, 60);
-
-    return () => clearTimeout(timer);
-  }, [threadMessages]);
+    if (!displayThreadMessages.length) return;
+    scrollToBottom(true);
+  }, [displayThreadMessages, scrollToBottom]);
 
   useEffect(() => {
     return () => {
       cleanupInboxSubscription();
       cleanupSelectedThreadSubscription();
+      clearScrollTimers();
 
       if (socketRefreshTimerRef.current) {
         clearTimeout(socketRefreshTimerRef.current);
@@ -762,9 +1051,40 @@ export default function TextMomAdminScreen() {
         }
       }
     };
-  }, [cleanupInboxSubscription, cleanupSelectedThreadSubscription]);
+  }, [cleanupInboxSubscription, cleanupSelectedThreadSubscription, clearScrollTimers]);
 
-  const renderMessage = ({ item }: { item: AdminSupportTextMessage }) => {
+  const renderNewUserNotice = (count = 1) => {
+    const plural = count > 1;
+
+    return (
+      <View style={styles.newMessageBarWrap}>
+        <View style={styles.newMessageLine} />
+
+        <View style={styles.newMessageBar}>
+          <Ionicons
+            name="chevron-down-circle"
+            size={14}
+            color={BRAND.orangeDark}
+          />
+
+          <Text style={styles.newMessageText}>
+            {plural ? `${count} new messages` : "New message"}
+          </Text>
+        </View>
+
+        <View style={styles.newMessageLine} />
+      </View>
+    );
+  };
+
+  const renderMessage = ({ item }: { item: AdminRenderableMessage }) => {
+    if (
+      item.id === NEW_ADMIN_MESSAGE_NOTICE_ID &&
+      item.noticeKind === "new_user_messages"
+    ) {
+      return renderNewUserNotice(item.noticeCount || 1);
+    }
+
     const mine = item.direction === "inbound_from_support";
     const system = item.direction === "system";
 
@@ -1115,13 +1435,23 @@ export default function TextMomAdminScreen() {
                     ) : (
                       <FlatList
                         ref={flatListRef}
-                        data={threadMessages}
+                        data={displayThreadMessages}
                         keyExtractor={(item) => `msg-${item.id}`}
                         renderItem={renderMessage}
                         contentContainerStyle={styles.messagesList}
                         showsVerticalScrollIndicator={false}
                         keyboardShouldPersistTaps="handled"
                         style={{ flex: 1 }}
+                        onContentSizeChange={() => {
+                          if (displayThreadMessages.length > 0) {
+                            scrollToBottom(true);
+                          }
+                        }}
+                        onLayout={() => {
+                          if (displayThreadMessages.length > 0) {
+                            scrollToBottom(false);
+                          }
+                        }}
                       />
                     )}
                   </View>
@@ -1611,6 +1941,48 @@ const styles = StyleSheet.create({
     color: BRAND.muted,
     fontFamily: FONT.regular,
     fontSize: 13,
+  },
+
+  newMessageBarWrap: {
+    width: "100%",
+    alignSelf: "center",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 2,
+    marginBottom: 14,
+    paddingHorizontal: 0,
+    gap: 10,
+  },
+
+  newMessageLine: {
+    flex: 1,
+    height: 1,
+    minWidth: 0,
+    backgroundColor: BRAND.orangeBorder,
+    opacity: 0.85,
+  },
+
+  newMessageBar: {
+    flexShrink: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    alignSelf: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: BRAND.orangeBorder,
+    backgroundColor: BRAND.orangeSoft,
+  },
+
+  newMessageText: {
+    color: BRAND.orangeDark,
+    fontFamily: FONT.medium,
+    fontSize: 12,
+    letterSpacing: 0.15,
   },
 
   messagesList: {

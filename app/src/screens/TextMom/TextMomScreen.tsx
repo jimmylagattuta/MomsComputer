@@ -14,6 +14,11 @@ import {
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../../auth/AuthProvider";
+import {
+  clearTextMomUnreadCount,
+  getTextMomUnreadCount,
+  subscribeToTextMomUnreadCount,
+} from "../../services/notifications/textMomUnreadBadge";
 import { FONT } from "../../theme";
 import { BRAND, H_PADDING } from "../AskMom/theme";
 import TextMomAdminScreen from "./TextMomAdminScreen";
@@ -32,6 +37,11 @@ function buildMailtoUrl(email: string, subject: string, body: string) {
   const s = encodeURIComponent(subject);
   const b = encodeURIComponent(body);
   return `mailto:${email}?subject=${s}&body=${b}`;
+}
+
+function formatBadgeCount(count: number) {
+  if (count > 99) return "99+";
+  return String(count);
 }
 
 function TextMomHeader() {
@@ -56,6 +66,8 @@ export default function TextMomScreen() {
   const user = auth?.user;
   const isAdmin = user?.role === "admin";
 
+  const [textMomUnreadCount, setTextMomUnreadCount] = useState(0);
+
   const deepLinkThreadIdRaw = Array.isArray(params.threadId)
     ? params.threadId[0]
     : params.threadId;
@@ -69,10 +81,33 @@ export default function TextMomScreen() {
   const [showTextScreen, setShowTextScreen] = useState(hasDeepLinkThreadId);
 
   useEffect(() => {
+    let mounted = true;
+
+    getTextMomUnreadCount().then((count) => {
+      if (mounted) setTextMomUnreadCount(count);
+    });
+
+    const unsubscribe = subscribeToTextMomUnreadCount((count) => {
+      setTextMomUnreadCount(count);
+    });
+
+    return () => {
+      mounted = false;
+      unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
     if (hasDeepLinkThreadId) {
+      void clearTextMomUnreadCount();
       setShowTextScreen(true);
     }
   }, [hasDeepLinkThreadId]);
+
+  const handleOpenTextMom = async () => {
+    await clearTextMomUnreadCount();
+    setShowTextScreen(true);
+  };
 
   if (isAdmin) {
     return <TextMomAdminScreen />;
@@ -125,7 +160,7 @@ export default function TextMomScreen() {
 
             <View style={styles.actions}>
               <Pressable
-                onPress={() => setShowTextScreen(true)}
+                onPress={handleOpenTextMom}
                 style={({ pressed }) => [
                   styles.actionBtn,
                   styles.actionBtnPrimary,
@@ -133,7 +168,18 @@ export default function TextMomScreen() {
                 ]}
                 hitSlop={10}
               >
-                <Text style={styles.actionBtnPrimaryText}>Text Mom</Text>
+                <View style={styles.actionTitleRow}>
+                  <Text style={styles.actionBtnPrimaryText}>Text Mom</Text>
+
+                  {textMomUnreadCount > 0 && (
+                    <View style={styles.textMomBadge}>
+                      <Text style={styles.textMomBadgeText}>
+                        {formatBadgeCount(textMomUnreadCount)}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+
                 <Text style={styles.actionBtnSub}>Opens live text</Text>
               </Pressable>
 
@@ -295,11 +341,17 @@ const styles = StyleSheet.create({
     transform: [{ scale: 0.99 }],
   },
 
+  actionTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 2,
+  },
+
   actionBtnPrimaryText: {
     color: "#FFFFFF",
     fontSize: 15,
     fontWeight: "900",
-    marginBottom: 2,
     fontFamily: FONT.medium,
   },
 
@@ -325,6 +377,25 @@ const styles = StyleSheet.create({
     lineHeight: 16,
     fontWeight: "700",
     fontFamily: FONT.regular,
+  },
+
+  textMomBadge: {
+    minWidth: 22,
+    height: 22,
+    borderRadius: 999,
+    paddingHorizontal: 6,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#DC2626",
+    borderWidth: 2,
+    borderColor: "#FFFFFF",
+  },
+
+  textMomBadgeText: {
+    color: "#FFFFFF",
+    fontFamily: FONT.medium,
+    fontSize: 11,
+    lineHeight: 13,
   },
 
   tipCard: {

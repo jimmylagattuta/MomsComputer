@@ -38,6 +38,10 @@ import DebugDropdown from "./components/DebugDropdown";
 import HistoryDrawer from "./components/HistoryDrawer";
 
 const SHOW_DEBUG_DROPDOWN = false;
+
+// Turn this back to true only if you need the orange-bar debug panel again.
+const SHOW_NEW_MESSAGE_BAR_DEBUG = false;
+
 const FALLBACK_REFRESH_MS = 20 * 60 * 1000;
 
 const BRAND = {
@@ -54,6 +58,10 @@ const BRAND = {
   blueBorder: "#D6E7FF",
   green: "#16A34A",
   red: "#DC2626",
+  orange: "#EA580C",
+  orangeDark: "#9A3412",
+  orangeSoft: "#FFF7ED",
+  orangeBorder: "#FDBA74",
   bubbleMine: "#1D6FE9",
   bubbleMineText: "#FFFFFF",
   bubbleTheirs: "#FFFFFF",
@@ -65,6 +73,10 @@ const BRAND = {
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const LAST_THREAD_DIVIDER_ID = -999999;
 const LOCAL_WELCOME_ID = -1;
+const NEW_SUPPORT_MESSAGE_NOTICE_ID = -888888;
+
+const USER_LAST_SEEN_SUPPORT_MESSAGE_KEY_PREFIX =
+  "text_mom_user_last_seen_support_message_id_v5_";
 
 type UiImage = {
   uri: string;
@@ -108,10 +120,28 @@ type SupportTextMessage = {
 
 type SupportTextRenderableMessage = SupportTextMessage & {
   dividerLabel?: string;
+  noticeKind?: "new_support_messages";
+  noticeCount?: number;
 };
+
+type NewSupportNoticeState = {
+  anchorMessageId: number;
+  count: number;
+} | null;
 
 type CableSubscription = {
   unsubscribe: () => void;
+};
+
+type NewMessageDebugState = {
+  threadId: number | null;
+  savedLastSeenId: number;
+  incomingIds: number[];
+  newIds: number[];
+  noticeAnchorId: number | null;
+  noticeCount: number;
+  displayIds: number[];
+  lastEvent: string;
 };
 
 function formatMetaTime(iso?: string | null) {
@@ -173,6 +203,64 @@ function buildLastThreadDivider(
   };
 }
 
+function getUserLastSeenSupportMessageKey(threadId: number) {
+  return `${USER_LAST_SEEN_SUPPORT_MESSAGE_KEY_PREFIX}${threadId}`;
+}
+
+function buildNewSupportNotice(count: number): SupportTextRenderableMessage {
+  return {
+    id: NEW_SUPPORT_MESSAGE_NOTICE_ID,
+    direction: "system",
+    status: "sent",
+    body: null,
+    created_at: new Date().toISOString(),
+    intro_message: false,
+    author_agent_name: "Mom's Computer",
+    images: [],
+    noticeKind: "new_support_messages",
+    noticeCount: count,
+  };
+}
+
+function getIncomingSupportMessages(rows: SupportTextRenderableMessage[]) {
+  return rows
+    .filter(
+      (m) =>
+        m.id > 0 &&
+        m.direction === "inbound_from_support" &&
+        !m.noticeKind
+    )
+    .sort((a, b) => {
+      const aTime = new Date(a.created_at || 0).getTime();
+      const bTime = new Date(b.created_at || 0).getTime();
+
+      if (aTime !== bTime) return aTime - bTime;
+      return a.id - b.id;
+    });
+}
+
+function insertNewSupportNoticeIntoMessages(
+  rows: SupportTextRenderableMessage[],
+  notice: NewSupportNoticeState
+) {
+  if (!notice || !notice.anchorMessageId || notice.count <= 0) {
+    return rows.filter((m) => m.id !== NEW_SUPPORT_MESSAGE_NOTICE_ID);
+  }
+
+  const cleanedRows = rows.filter((m) => m.id !== NEW_SUPPORT_MESSAGE_NOTICE_ID);
+  const anchorIndex = cleanedRows.findIndex((m) => m.id === notice.anchorMessageId);
+
+  if (anchorIndex < 0) return cleanedRows;
+
+  const noticeRow = buildNewSupportNotice(notice.count);
+
+  return [
+    ...cleanedRows.slice(0, anchorIndex),
+    noticeRow,
+    ...cleanedRows.slice(anchorIndex),
+  ];
+}
+
 export default function TextMomUserScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ threadId?: string | string[] }>();
@@ -200,9 +288,13 @@ export default function TextMomUserScreen() {
   const showLastThreadDividerRef = useRef(false);
   const hasBootstrappedRef = useRef(false);
   const subscriptionRunIdRef = useRef(0);
-  const refreshAfterSocketTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const refreshAfterSocketTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
   const handledDeepLinkThreadIdRef = useRef<number | null>(null);
   const deepLinkInProgressRef = useRef(false);
+  const newSupportNoticeRef = useRef<NewSupportNoticeState>(null);
+  const scrollTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
 
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [threads, setThreads] = useState<SupportTextThreadSummary[]>([]);
@@ -211,6 +303,20 @@ export default function TextMomUserScreen() {
   const [isSending, setIsSending] = useState(false);
   const [thread, setThread] = useState<SupportTextThread | null>(null);
   const [messages, setMessages] = useState<SupportTextRenderableMessage[]>([]);
+  const [newSupportNotice, setNewSupportNotice] =
+    useState<NewSupportNoticeState>(null);
+
+  const [newMessageDebug, setNewMessageDebug] = useState<NewMessageDebugState>({
+    threadId: null,
+    savedLastSeenId: 0,
+    incomingIds: [],
+    newIds: [],
+    noticeAnchorId: null,
+    noticeCount: 0,
+    displayIds: [],
+    lastEvent: "not checked yet",
+  });
+
   const [draft, setDraft] = useState("");
   const [pickedImages, setPickedImages] = useState<UiImage[]>([]);
   const [lastMessage, setLastMessage] = useState<string | null>(null);
@@ -224,12 +330,67 @@ export default function TextMomUserScreen() {
   const [previewUri, setPreviewUri] = useState<string | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
 
+  useEffect(() => {
+    newSupportNoticeRef.current = newSupportNotice;
+  }, [newSupportNotice]);
+
   const titleStyle = useMemo(
     () => [styles.title, isNarrow && styles.titleNarrow],
     [isNarrow]
   );
 
   const sendDisabled = isSending || (!draft.trim() && pickedImages.length === 0);
+
+  const displayMessages = useMemo(
+    () => insertNewSupportNoticeIntoMessages(messages, newSupportNotice),
+    [messages, newSupportNotice]
+  );
+
+  const clearScrollTimers = useCallback(() => {
+    scrollTimersRef.current.forEach((timer) => clearTimeout(timer));
+    scrollTimersRef.current = [];
+  }, []);
+
+  const scrollToBottom = useCallback(
+    (animated = true) => {
+      clearScrollTimers();
+
+      const delays = [40, 140, 320, 650];
+
+      delays.forEach((delay) => {
+        const timer = setTimeout(() => {
+          flatListRef.current?.scrollToEnd({ animated });
+        }, delay);
+
+        scrollTimersRef.current.push(timer);
+      });
+    },
+    [clearScrollTimers]
+  );
+
+  useEffect(() => {
+    setNewMessageDebug((prev) => ({
+      ...prev,
+      displayIds: displayMessages.map((message) => message.id),
+      noticeAnchorId: newSupportNotice?.anchorMessageId || null,
+      noticeCount: newSupportNotice?.count || 0,
+    }));
+
+    console.log("[TextMomUser] displayMessages updated", {
+      displayIds: displayMessages.map((message) => message.id),
+      notice: newSupportNotice,
+    });
+
+    if (displayMessages.length > 0) {
+      scrollToBottom(true);
+    }
+  }, [displayMessages, newSupportNotice, scrollToBottom]);
+
+  useEffect(() => {
+    return () => {
+      clearScrollTimers();
+    };
+  }, [clearScrollTimers]);
 
   const openPreview = useCallback((uri: string) => {
     setPreviewUri(uri);
@@ -240,6 +401,225 @@ export default function TextMomUserScreen() {
     setPreviewOpen(false);
     setPreviewUri(null);
   }, []);
+
+  const setNoticeAndMarkSeenForNextVisit = useCallback(
+    async (
+      threadId: number,
+      anchorMessageId: number,
+      count: number,
+      latestId: number
+    ) => {
+      const nextNotice = {
+        anchorMessageId,
+        count,
+      };
+
+      console.log("[TextMomUser] SETTING ORANGE BAR", {
+        threadId,
+        nextNotice,
+        latestId,
+      });
+
+      setNewSupportNotice(nextNotice);
+      newSupportNoticeRef.current = nextNotice;
+
+      setNewMessageDebug((prev) => ({
+        ...prev,
+        threadId,
+        noticeAnchorId: nextNotice.anchorMessageId,
+        noticeCount: nextNotice.count,
+        lastEvent: `orange bar set above message ${anchorMessageId}; count ${count}`,
+      }));
+
+      scrollToBottom(true);
+
+      try {
+        await SecureStore.setItemAsync(
+          getUserLastSeenSupportMessageKey(threadId),
+          String(latestId)
+        );
+      } catch (error) {
+        console.log("[TextMomUser] failed saving seen support id", error);
+
+        setNewMessageDebug((prev) => ({
+          ...prev,
+          lastEvent: `failed saving seen id: ${String(error)}`,
+        }));
+      }
+    },
+    [scrollToBottom]
+  );
+
+  const evaluateNewSupportNotice = useCallback(
+    async (threadId: number, rows: SupportTextRenderableMessage[]) => {
+      try {
+        const incomingSupportMessages = getIncomingSupportMessages(rows);
+        const incomingIds = incomingSupportMessages.map((message) => message.id);
+
+        if (!incomingSupportMessages.length) {
+          console.log("[TextMomUser] no incoming support messages found", {
+            threadId,
+            rowDirections: rows.map((message) => ({
+              id: message.id,
+              direction: message.direction,
+              noticeKind: message.noticeKind,
+            })),
+          });
+
+          setNewMessageDebug((prev) => ({
+            ...prev,
+            threadId,
+            savedLastSeenId: 0,
+            incomingIds: [],
+            newIds: [],
+            noticeAnchorId: null,
+            noticeCount: 0,
+            lastEvent: "no inbound_from_support messages found",
+          }));
+
+          setNewSupportNotice(null);
+          newSupportNoticeRef.current = null;
+          return;
+        }
+
+        const latestIncomingMessage =
+          incomingSupportMessages[incomingSupportMessages.length - 1];
+
+        const existingNotice = newSupportNoticeRef.current;
+
+        if (existingNotice?.anchorMessageId) {
+          const messagesSinceAnchor = incomingSupportMessages.filter(
+            (message) => message.id >= existingNotice.anchorMessageId
+          );
+
+          const nextNotice = {
+            anchorMessageId: existingNotice.anchorMessageId,
+            count: Math.max(messagesSinceAnchor.length, existingNotice.count),
+          };
+
+          console.log("[TextMomUser] keeping existing orange bar alive", {
+            threadId,
+            existingNotice,
+            nextNotice,
+            incomingIds,
+          });
+
+          setNewSupportNotice(nextNotice);
+          newSupportNoticeRef.current = nextNotice;
+
+          setNewMessageDebug((prev) => ({
+            ...prev,
+            threadId,
+            incomingIds,
+            newIds: messagesSinceAnchor.map((message) => message.id),
+            noticeAnchorId: nextNotice.anchorMessageId,
+            noticeCount: nextNotice.count,
+            lastEvent: "kept existing orange bar alive during refresh",
+          }));
+
+          scrollToBottom(true);
+
+          await SecureStore.setItemAsync(
+            getUserLastSeenSupportMessageKey(threadId),
+            String(latestIncomingMessage.id)
+          );
+
+          return;
+        }
+
+        const key = getUserLastSeenSupportMessageKey(threadId);
+        const rawLastSeen = await SecureStore.getItemAsync(key);
+        const parsedLastSeenId = Number(rawLastSeen || 0);
+        const safeLastSeenId = Number.isFinite(parsedLastSeenId)
+          ? parsedLastSeenId
+          : 0;
+
+        const newMessages = incomingSupportMessages.filter(
+          (message) => message.id > safeLastSeenId
+        );
+
+        const newIds = newMessages.map((message) => message.id);
+
+        console.log("[TextMomUser] new support notice check", {
+          threadId,
+          storageKey: key,
+          rawLastSeen,
+          safeLastSeenId,
+          incomingIds,
+          newIds,
+          rowDirections: rows.map((message) => ({
+            id: message.id,
+            direction: message.direction,
+            noticeKind: message.noticeKind,
+          })),
+        });
+
+        setNewMessageDebug((prev) => ({
+          ...prev,
+          threadId,
+          savedLastSeenId: safeLastSeenId,
+          incomingIds,
+          newIds,
+          noticeAnchorId: newMessages[0]?.id || null,
+          noticeCount: newMessages.length,
+          lastEvent: newMessages.length
+            ? `found ${newMessages.length} new support message(s)`
+            : "no new support messages after saved last-seen id",
+        }));
+
+        if (!newMessages.length) {
+          setNewSupportNotice(null);
+          newSupportNoticeRef.current = null;
+          return;
+        }
+
+        await setNoticeAndMarkSeenForNextVisit(
+          threadId,
+          newMessages[0].id,
+          newMessages.length,
+          latestIncomingMessage.id
+        );
+      } catch (error) {
+        console.log("[TextMomUser] new support notice check failed", error);
+
+        setNewMessageDebug((prev) => ({
+          ...prev,
+          lastEvent: `error checking orange bar: ${String(error)}`,
+        }));
+
+        setNewSupportNotice(null);
+        newSupportNoticeRef.current = null;
+      }
+    },
+    [scrollToBottom, setNoticeAndMarkSeenForNextVisit]
+  );
+
+  const forceOrangeBarForDebug = useCallback(async () => {
+    const activeThreadId = threadIdRef.current;
+    const incomingSupportMessages = getIncomingSupportMessages(messagesRef.current);
+
+    if (!activeThreadId) {
+      Alert.alert("No thread", "No active thread ID found yet.");
+      return;
+    }
+
+    if (!incomingSupportMessages.length) {
+      Alert.alert(
+        "No support messages",
+        "No inbound_from_support messages found."
+      );
+      return;
+    }
+
+    const latest = incomingSupportMessages[incomingSupportMessages.length - 1];
+
+    await setNoticeAndMarkSeenForNextVisit(
+      activeThreadId,
+      latest.id,
+      1,
+      latest.id
+    );
+  }, [setNoticeAndMarkSeenForNextVisit]);
 
   useEffect(() => {
     threadRef.current = thread;
@@ -252,16 +632,6 @@ export default function TextMomUserScreen() {
   useEffect(() => {
     showLastThreadDividerRef.current = showLastThreadDivider;
   }, [showLastThreadDivider]);
-
-  useEffect(() => {
-    if (!messages.length) return;
-
-    const timer = setTimeout(() => {
-      flatListRef.current?.scrollToEnd({ animated: true });
-    }, 60);
-
-    return () => clearTimeout(timer);
-  }, [messages]);
 
   useEffect(() => {
     return () => {
@@ -292,7 +662,12 @@ export default function TextMomUserScreen() {
   };
 
   const hasRealMessages = (rows: SupportTextRenderableMessage[]) =>
-    rows.some((m) => m.id !== LOCAL_WELCOME_ID && m.id !== LAST_THREAD_DIVIDER_ID);
+    rows.some(
+      (m) =>
+        m.id !== LOCAL_WELCOME_ID &&
+        m.id !== LAST_THREAD_DIVIDER_ID &&
+        m.id !== NEW_SUPPORT_MESSAGE_NOTICE_ID
+    );
 
   const getLiveRecentUiCopy = useCallback((threadRow?: SupportTextThread | null) => {
     const lastSupportAt = threadRow?.last_support_message_at
@@ -328,12 +703,34 @@ export default function TextMomUserScreen() {
         allowFallback?: boolean;
         includeLastThreadDivider?: boolean;
         preserveExistingIfEmpty?: boolean;
+        evaluateNoticeForThreadId?: number;
       }
     ) => {
       const backendVisibleMessages = incomingMessages || [];
       const allowFallback = options?.allowFallback ?? false;
       const includeLastThreadDivider = options?.includeLastThreadDivider ?? false;
       const preserveExistingIfEmpty = options?.preserveExistingIfEmpty ?? false;
+      const evaluateNoticeForThreadId = options?.evaluateNoticeForThreadId;
+
+      const finalizeMessages = (nextRows: SupportTextRenderableMessage[]) => {
+        console.log("[TextMomUser] applyMessages finalize", {
+          evaluateNoticeForThreadId,
+          ids: nextRows.map((message) => message.id),
+          directions: nextRows.map((message) => ({
+            id: message.id,
+            direction: message.direction,
+            noticeKind: message.noticeKind,
+          })),
+        });
+
+        setMessages(nextRows);
+
+        if (evaluateNoticeForThreadId) {
+          void evaluateNewSupportNotice(evaluateNoticeForThreadId, nextRows);
+        }
+
+        scrollToBottom(true);
+      };
 
       if (backendVisibleMessages.length > 0) {
         const dividerLabel = includeLastThreadDivider
@@ -344,31 +741,55 @@ export default function TextMomUserScreen() {
           ? [buildLastThreadDivider(dividerLabel), ...backendVisibleMessages]
           : [...backendVisibleMessages];
 
-        setMessages(next);
+        finalizeMessages(next);
         setShowLastThreadDivider(includeLastThreadDivider);
         return;
       }
 
       if (preserveExistingIfEmpty) {
         setMessages((prev) => {
-          if (hasRealMessages(prev)) return prev;
-          if (!allowFallback || !introEligibleRef.current) return [];
-          return [buildLocalWelcomeMessage()];
+          if (hasRealMessages(prev)) {
+            if (evaluateNoticeForThreadId) {
+              void evaluateNewSupportNotice(evaluateNoticeForThreadId, prev);
+            }
+
+            scrollToBottom(true);
+            return prev;
+          }
+
+          if (!allowFallback || !introEligibleRef.current) {
+            if (evaluateNoticeForThreadId) {
+              void evaluateNewSupportNotice(evaluateNoticeForThreadId, []);
+            }
+
+            return [];
+          }
+
+          const fallback = [buildLocalWelcomeMessage()];
+
+          if (evaluateNoticeForThreadId) {
+            void evaluateNewSupportNotice(evaluateNoticeForThreadId, fallback);
+          }
+
+          scrollToBottom(true);
+          return fallback;
         });
+
         setShowLastThreadDivider(false);
         return;
       }
 
       if (!allowFallback || !introEligibleRef.current) {
-        setMessages([]);
+        finalizeMessages([]);
         setShowLastThreadDivider(includeLastThreadDivider);
         return;
       }
 
-      setMessages([buildLocalWelcomeMessage()]);
+      const fallback = [buildLocalWelcomeMessage()];
+      finalizeMessages(fallback);
       setShowLastThreadDivider(false);
     },
-    [getLiveRecentUiCopy]
+    [evaluateNewSupportNotice, getLiveRecentUiCopy, scrollToBottom]
   );
 
   const refreshMessages = useCallback(
@@ -389,6 +810,11 @@ export default function TextMomUserScreen() {
           ok: response?.ok,
           threadId,
           count: response?.json?.messages?.length,
+          messages: response?.json?.messages?.map?.((message: SupportTextMessage) => ({
+            id: message.id,
+            direction: message.direction,
+            body: message.body,
+          })),
         });
 
         if (!response?.ok) return;
@@ -407,12 +833,14 @@ export default function TextMomUserScreen() {
               allowFallback: true,
               includeLastThreadDivider: false,
               preserveExistingIfEmpty: true,
+              evaluateNoticeForThreadId: threadId,
             });
           }
           return;
         }
 
         if ((!nextMessages || nextMessages.length === 0) && hasExistingRealMessages) {
+          scrollToBottom(true);
           return;
         }
 
@@ -420,15 +848,17 @@ export default function TextMomUserScreen() {
           allowFallback: modeRef.current === "fresh",
           includeLastThreadDivider: includeDivider,
           preserveExistingIfEmpty: true,
+          evaluateNoticeForThreadId: threadId,
         });
       } catch (error) {
         console.log("[TextMomUser] refreshMessages failed", error);
+
         if (!silent) {
           setLastMessage("Unable to refresh messages right now.");
         }
       }
     },
-    [applyMessages]
+    [applyMessages, scrollToBottom]
   );
 
   const refreshThreadSafely = useCallback(async () => {
@@ -467,7 +897,10 @@ export default function TextMomUserScreen() {
 
       setMessages((prev) => {
         const cleaned = prev.filter(
-          (m) => m.id !== LOCAL_WELCOME_ID && m.id !== LAST_THREAD_DIVIDER_ID
+          (m) =>
+            m.id !== LOCAL_WELCOME_ID &&
+            m.id !== LAST_THREAD_DIVIDER_ID &&
+            m.id !== NEW_SUPPORT_MESSAGE_NOTICE_ID
         );
 
         const existingIndex = cleaned.findIndex((m) => m.id === incomingMessage.id);
@@ -479,37 +912,87 @@ export default function TextMomUserScreen() {
 
         const next =
           existingIndex >= 0
-            ? cleaned.map((m) => (m.id === incomingMessage.id ? { ...m, ...normalizedIncoming } : m))
+            ? cleaned.map((m) =>
+              m.id === incomingMessage.id ? { ...m, ...normalizedIncoming } : m
+            )
             : [...cleaned, normalizedIncoming];
 
-        return next.sort((a, b) => {
+        const sorted = next.sort((a, b) => {
           const aTime = new Date(a.created_at).getTime();
           const bTime = new Date(b.created_at).getTime();
 
           if (aTime !== bTime) return aTime - bTime;
           return a.id - b.id;
         });
+
+        console.log("[TextMomUser] appendLiveMessage sorted", {
+          incomingId: incomingMessage.id,
+          incomingDirection: incomingMessage.direction,
+          sortedIds: sorted.map((message) => message.id),
+          sortedDirections: sorted.map((message) => ({
+            id: message.id,
+            direction: message.direction,
+          })),
+        });
+
+        if (
+          incomingMessage.direction === "inbound_from_support" &&
+          threadRef.current?.id
+        ) {
+          const existingNotice = newSupportNoticeRef.current;
+          const activeThreadId = threadRef.current.id;
+
+          if (existingNotice?.anchorMessageId) {
+            const incomingSupportMessages = getIncomingSupportMessages(sorted);
+
+            const messagesSinceAnchor = incomingSupportMessages.filter(
+              (message) => message.id >= existingNotice.anchorMessageId
+            );
+
+            void setNoticeAndMarkSeenForNextVisit(
+              activeThreadId,
+              existingNotice.anchorMessageId,
+              Math.max(messagesSinceAnchor.length, existingNotice.count),
+              incomingMessage.id
+            );
+          } else {
+            void setNoticeAndMarkSeenForNextVisit(
+              activeThreadId,
+              incomingMessage.id,
+              1,
+              incomingMessage.id
+            );
+          }
+        }
+
+        return sorted;
       });
 
       setShowLastThreadDivider(false);
+      scrollToBottom(true);
     },
-    []
+    [scrollToBottom, setNoticeAndMarkSeenForNextVisit]
   );
 
-  const scheduleRefreshForIncomingSupportMessage = useCallback((threadId?: number | null) => {
-    if (!threadId) return;
+  const scheduleRefreshForIncomingSupportMessage = useCallback(
+    (threadId?: number | null) => {
+      if (!threadId) return;
 
-    if (refreshAfterSocketTimerRef.current) {
-      clearTimeout(refreshAfterSocketTimerRef.current);
-    }
+      if (refreshAfterSocketTimerRef.current) {
+        clearTimeout(refreshAfterSocketTimerRef.current);
+      }
 
-    console.log("[TextMomUser] scheduling refresh for incoming support message", { threadId });
+      console.log("[TextMomUser] scheduling refresh for incoming support message", {
+        threadId,
+      });
 
-    refreshAfterSocketTimerRef.current = setTimeout(() => {
-      console.log("[TextMomUser] executing scheduled refresh", { threadId });
-      void refreshMessages(true, threadId);
-    }, 500);
-  }, [refreshMessages]);
+      refreshAfterSocketTimerRef.current = setTimeout(() => {
+        console.log("[TextMomUser] executing scheduled refresh", { threadId });
+        void refreshMessages(true, threadId);
+      }, 500);
+    },
+    [refreshMessages]
+  );
 
   const subscribeToActiveThread = useCallback(
     async (activeThreadId?: number | null) => {
@@ -544,12 +1027,16 @@ export default function TextMomUserScreen() {
             console.log("[TextMomUser] socket message received", {
               id: message?.id,
               direction: message?.direction,
-              imageCount: Array.isArray(message?.images) ? message.images.length : "missing",
+              body: message?.body,
+              imageCount: Array.isArray(message?.images)
+                ? message.images.length
+                : "missing",
             });
 
             appendLiveMessage(message, thread);
 
-            const isIncomingSupportMessage = message?.direction === "inbound_from_support";
+            const isIncomingSupportMessage =
+              message?.direction === "inbound_from_support";
 
             if (isIncomingSupportMessage) {
               scheduleRefreshForIncomingSupportMessage(thread?.id || threadId);
@@ -583,6 +1070,8 @@ export default function TextMomUserScreen() {
       setLastMessage(null);
       introEligibleRef.current = false;
       setMessages([]);
+      setNewSupportNotice(null);
+      newSupportNoticeRef.current = null;
       setShowLastThreadDivider(false);
       setStatusBanner(null);
       modeRef.current = "fresh";
@@ -591,6 +1080,17 @@ export default function TextMomUserScreen() {
       threadRef.current = null;
       threadIdRef.current = null;
       clearThreadSubscription();
+
+      setNewMessageDebug({
+        threadId: null,
+        savedLastSeenId: 0,
+        incomingIds: [],
+        newIds: [],
+        noticeAnchorId: null,
+        noticeCount: 0,
+        displayIds: [],
+        lastEvent: "bootstrap started",
+      });
 
       const token = await SecureStore.getItemAsync("auth_token");
       if (!token) {
@@ -630,10 +1130,20 @@ export default function TextMomUserScreen() {
           (m) => (m as any).visible_to_user !== false
         ) as SupportTextMessage[];
 
+        console.log("[TextMomUser] bootstrap recent thread detail", {
+          threadId: detail.thread.id,
+          messages: nextMessages.map((message) => ({
+            id: message.id,
+            direction: message.direction,
+            body: message.body,
+          })),
+        });
+
         if (nextMessages.length > 0) {
           applyMessages(nextMessages, {
             allowFallback: false,
             includeLastThreadDivider: true,
+            evaluateNoticeForThreadId: detail.thread.id,
           });
 
           const recentCopy = getLiveRecentUiCopy(detail.thread as SupportTextThread);
@@ -645,6 +1155,7 @@ export default function TextMomUserScreen() {
           });
 
           await subscribeToActiveThread(detail.thread.id);
+          scrollToBottom(false);
           return;
         }
 
@@ -652,6 +1163,8 @@ export default function TextMomUserScreen() {
         setThread(null);
         threadRef.current = null;
         threadIdRef.current = null;
+        setNewSupportNotice(null);
+        newSupportNoticeRef.current = null;
         introEligibleRef.current = true;
         setStatusBanner(null);
         clearThreadSubscription();
@@ -685,6 +1198,7 @@ export default function TextMomUserScreen() {
     applyMessages,
     clearThreadSubscription,
     getLiveRecentUiCopy,
+    scrollToBottom,
     subscribeToActiveThread,
   ]);
 
@@ -730,6 +1244,7 @@ export default function TextMomUserScreen() {
   useEffect(() => {
     return () => {
       clearThreadSubscription();
+      clearScrollTimers();
 
       if (refreshAfterSocketTimerRef.current) {
         clearTimeout(refreshAfterSocketTimerRef.current);
@@ -746,7 +1261,7 @@ export default function TextMomUserScreen() {
         }
       }
     };
-  }, [clearThreadSubscription]);
+  }, [clearScrollTimers, clearThreadSubscription]);
 
   const handleSelectThread = useCallback(
     async (threadId: number) => {
@@ -755,10 +1270,23 @@ export default function TextMomUserScreen() {
         setIsBooting(true);
         setLastMessage(null);
         setMessages([]);
+        setNewSupportNotice(null);
+        newSupportNoticeRef.current = null;
         setShowLastThreadDivider(false);
         modeRef.current = "recent";
         introEligibleRef.current = false;
         sentInCurrentSessionRef.current = false;
+
+        setNewMessageDebug({
+          threadId,
+          savedLastSeenId: 0,
+          incomingIds: [],
+          newIds: [],
+          noticeAnchorId: null,
+          noticeCount: 0,
+          displayIds: [],
+          lastEvent: "manual thread selected",
+        });
 
         clearThreadSubscription();
 
@@ -772,9 +1300,19 @@ export default function TextMomUserScreen() {
           (m) => (m as any).visible_to_user !== false
         ) as SupportTextMessage[];
 
+        console.log("[TextMomUser] selected thread detail", {
+          threadId: detail.thread.id,
+          messages: nextMessages.map((message) => ({
+            id: message.id,
+            direction: message.direction,
+            body: message.body,
+          })),
+        });
+
         applyMessages(nextMessages, {
           allowFallback: false,
           includeLastThreadDivider: true,
+          evaluateNoticeForThreadId: detail.thread.id,
         });
 
         const recentCopy = getLiveRecentUiCopy(detail.thread as SupportTextThread);
@@ -789,10 +1327,7 @@ export default function TextMomUserScreen() {
         setPickedImages([]);
 
         await subscribeToActiveThread(detail.thread.id);
-
-        setTimeout(() => {
-          flatListRef.current?.scrollToEnd({ animated: false });
-        }, 50);
+        scrollToBottom(false);
       } catch (e: any) {
         Alert.alert(
           "Couldn’t load that thread",
@@ -802,7 +1337,13 @@ export default function TextMomUserScreen() {
         setIsBooting(false);
       }
     },
-    [applyMessages, clearThreadSubscription, getLiveRecentUiCopy, subscribeToActiveThread]
+    [
+      applyMessages,
+      clearThreadSubscription,
+      getLiveRecentUiCopy,
+      scrollToBottom,
+      subscribeToActiveThread,
+    ]
   );
 
   useEffect(() => {
@@ -1022,6 +1563,7 @@ export default function TextMomUserScreen() {
       }
 
       await refreshMessages(true, activeThreadId ?? undefined);
+      scrollToBottom(true);
     } catch (e: any) {
       Alert.alert("Error", e?.message || "Unable to send.");
     } finally {
@@ -1068,7 +1610,92 @@ export default function TextMomUserScreen() {
     );
   };
 
+  const renderNewMessageDebugPanel = () => {
+    if (!SHOW_NEW_MESSAGE_BAR_DEBUG) return null;
+
+    return (
+      <View style={styles.debugPanel}>
+        <View style={styles.debugPanelHeader}>
+          <Text style={styles.debugPanelTitle}>Orange Bar Debug</Text>
+
+          <Pressable
+            onPress={forceOrangeBarForDebug}
+            style={({ pressed }) => [
+              styles.debugForceButton,
+              pressed && styles.debugForceButtonPressed,
+            ]}
+          >
+            <Text style={styles.debugForceButtonText}>Force Bar</Text>
+          </Pressable>
+        </View>
+
+        <Text style={styles.debugPanelText}>
+          threadId: {String(newMessageDebug.threadId)}
+        </Text>
+        <Text style={styles.debugPanelText}>
+          savedLastSeenId: {String(newMessageDebug.savedLastSeenId)}
+        </Text>
+        <Text style={styles.debugPanelText}>
+          incomingIds: {newMessageDebug.incomingIds.join(", ") || "none"}
+        </Text>
+        <Text style={styles.debugPanelText}>
+          newIds: {newMessageDebug.newIds.join(", ") || "none"}
+        </Text>
+        <Text style={styles.debugPanelText}>
+          notice: anchor {String(newMessageDebug.noticeAnchorId)} / count{" "}
+          {String(newMessageDebug.noticeCount)}
+        </Text>
+        <Text style={styles.debugPanelText}>
+          displayIds: {newMessageDebug.displayIds.join(", ") || "none"}
+        </Text>
+        <Text style={styles.debugPanelText}>
+          lastEvent: {newMessageDebug.lastEvent}
+        </Text>
+      </View>
+    );
+  };
+
+  const renderListHeader = () => {
+    return (
+      <>
+        {renderStatusBanner()}
+        {renderNewMessageDebugPanel()}
+      </>
+    );
+  };
+
+  const renderNewSupportNotice = (count = 1) => {
+    const plural = count > 1;
+
+    return (
+      <View style={styles.newMessageBarWrap}>
+        <View style={styles.newMessageLine} />
+
+        <View style={styles.newMessageBar}>
+          <Ionicons
+            name="chevron-down-circle"
+            size={14}
+            color={BRAND.orangeDark}
+          />
+
+          <Text style={styles.newMessageText}>
+            {plural ? `${count} new messages` : "New message"}
+          </Text>
+        </View>
+
+        <View style={styles.newMessageLine} />
+      </View>
+    );
+  };
+
   const renderMessage = ({ item }: { item: SupportTextRenderableMessage }) => {
+    if (
+      item.id === NEW_SUPPORT_MESSAGE_NOTICE_ID &&
+      item.noticeKind === "new_support_messages"
+    ) {
+      return renderNewSupportNotice(item.noticeCount || 1);
+    }
+
     if (item.id === LAST_THREAD_DIVIDER_ID && item.dividerLabel) {
       return (
         <View style={styles.dividerWrap}>
@@ -1282,13 +1909,31 @@ export default function TextMomUserScreen() {
             <>
               <FlatList
                 ref={flatListRef}
-                data={messages}
+                data={displayMessages}
                 keyExtractor={(item) => String(item.id)}
                 renderItem={renderMessage}
-                ListHeaderComponent={renderStatusBanner}
+                ListHeaderComponent={renderListHeader}
                 contentContainerStyle={styles.messagesList}
                 showsVerticalScrollIndicator={false}
                 keyboardShouldPersistTaps="handled"
+                onContentSizeChange={() => {
+                  if (displayMessages.length > 0) {
+                    scrollToBottom(true);
+                  }
+                }}
+                onLayout={() => {
+                  if (displayMessages.length > 0) {
+                    scrollToBottom(false);
+                  }
+                }}
+                onScrollToIndexFailed={(info) => {
+                  setTimeout(() => {
+                    flatListRef.current?.scrollToOffset({
+                      offset: Math.max(0, info.averageItemLength * info.index),
+                      animated: true,
+                    });
+                  }, 250);
+                }}
               />
 
               {!!pickedImages.length && (
@@ -1503,6 +2148,97 @@ const styles = StyleSheet.create({
     color: BRAND.muted,
     fontFamily: FONT.regular,
     fontSize: 13,
+  },
+
+  debugPanel: {
+    marginBottom: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#F59E0B",
+    backgroundColor: "#FFFBEB",
+  },
+
+  debugPanelHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    marginBottom: 8,
+  },
+
+  debugPanelTitle: {
+    color: "#92400E",
+    fontFamily: FONT.medium,
+    fontSize: 13,
+  },
+
+  debugForceButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 999,
+    backgroundColor: BRAND.orange,
+  },
+
+  debugForceButtonPressed: {
+    opacity: 0.85,
+    transform: [{ scale: 0.97 }],
+  },
+
+  debugForceButtonText: {
+    color: "#FFFFFF",
+    fontFamily: FONT.medium,
+    fontSize: 11,
+  },
+
+  debugPanelText: {
+    color: "#92400E",
+    fontFamily: FONT.regular,
+    fontSize: 11,
+    lineHeight: 16,
+  },
+
+  newMessageBarWrap: {
+    width: "100%",
+    alignSelf: "center",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 2,
+    marginBottom: 14,
+    paddingHorizontal: 0,
+    gap: 10,
+  },
+
+  newMessageLine: {
+    flex: 1,
+    height: 1,
+    minWidth: 0,
+    backgroundColor: BRAND.orangeBorder,
+    opacity: 0.85,
+  },
+
+  newMessageBar: {
+    flexShrink: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    alignSelf: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: BRAND.orangeBorder,
+    backgroundColor: BRAND.orangeSoft,
+  },
+
+  newMessageText: {
+    color: BRAND.orangeDark,
+    fontFamily: FONT.medium,
+    fontSize: 12,
+    letterSpacing: 0.15,
   },
 
   statusBanner: {

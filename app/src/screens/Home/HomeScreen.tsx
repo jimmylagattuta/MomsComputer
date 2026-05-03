@@ -23,6 +23,10 @@ import { FONT } from "../../../src/theme";
 import { useAuth } from "../../auth/AuthProvider";
 import { postJson } from "../../services/api/client";
 import { registerForPushNotificationsAsync } from "../../services/notifications";
+import {
+  getTextMomUnreadCount,
+  subscribeToTextMomUnreadCount,
+} from "../../services/notifications/textMomUnreadBadge";
 import { rcIdentifyUser, rcLogoutUser } from "../../subscriptions/rcClient";
 import { useSubscription } from "../../subscriptions/useSubscription";
 import HomeSettingsMenu from "./components/HomeSettingsMenu";
@@ -32,7 +36,7 @@ import HomeSettingsMenu from "./components/HomeSettingsMenu";
  * Turn SUBSCRIPTIONS_ENABLED ON when testing RevenueCat behavior.
  * Turn DEBUG_PAYWALL_BUTTON_ENABLED OFF when you want the debug button hidden.
  */
-const SUBSCRIPTIONS_ENABLED = false;
+const SUBSCRIPTIONS_ENABLED = true;
 const DEBUG_PAYWALL_BUTTON_ENABLED = true;
 
 const IS_ANDROID = Platform.OS === "android";
@@ -359,6 +363,8 @@ export default function HomeScreen() {
 
   const currentUserId = user?.id != null ? String(user.id) : null;
 
+  const [textMomUnreadCount, setTextMomUnreadCount] = useState(0);
+
   useEffect(() => {
     if (!SUBSCRIPTIONS_ENABLED) return;
 
@@ -545,6 +551,23 @@ export default function HomeScreen() {
     };
   }, [currentUserId, isLoggingOut, pushSyncUserId]);
 
+  useEffect(() => {
+    let mounted = true;
+
+    getTextMomUnreadCount().then((count) => {
+      if (mounted) setTextMomUnreadCount(count);
+    });
+
+    const unsubscribe = subscribeToTextMomUnreadCount((count) => {
+      setTextMomUnreadCount(count);
+    });
+
+    return () => {
+      mounted = false;
+      unsubscribe();
+    };
+  }, []);
+
   const handleOpenDebugPaywall = () => {
     if (!DEBUG_PAYWALL_BUTTON_ENABLED) return;
     if (isLoggingOut) return;
@@ -725,6 +748,14 @@ export default function HomeScreen() {
               >
                 <View style={styles.iconPill}>
                   <Ionicons name="mail" size={34} color={BRAND.blue} />
+
+                  {textMomUnreadCount > 0 && (
+                    <View style={styles.textMomBadge}>
+                      <Text style={styles.textMomBadgeText}>
+                        {textMomUnreadCount > 99 ? "99+" : textMomUnreadCount}
+                      </Text>
+                    </View>
+                  )}
                 </View>
 
                 <View style={styles.textWrap}>
@@ -975,6 +1006,7 @@ const styles = StyleSheet.create({
     backgroundColor: BRAND.blueSoft,
     borderWidth: 1,
     borderColor: BRAND.blueBorder,
+    position: "relative",
   },
 
   textWrap: {
@@ -1068,5 +1100,26 @@ const styles = StyleSheet.create({
     fontSize: IS_ANDROID ? 13 : 14,
     textAlign: "center",
     lineHeight: IS_ANDROID ? 17 : 18,
+  },
+  textMomBadge: {
+    position: "absolute",
+    top: -7,
+    right: -7,
+    minWidth: 22,
+    height: 22,
+    borderRadius: 999,
+    paddingHorizontal: 6,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#DC2626",
+    borderWidth: 2,
+    borderColor: "#FFFFFF",
+  },
+
+  textMomBadgeText: {
+    color: "#FFFFFF",
+    fontFamily: FONT.medium,
+    fontSize: 11,
+    lineHeight: 13,
   },
 });
