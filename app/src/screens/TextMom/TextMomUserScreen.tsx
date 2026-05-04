@@ -2003,6 +2003,10 @@ export default function TextMomUserScreen() {
                     multiline
                     style={styles.input}
                     textAlignVertical="top"
+                    autoCorrect={true}
+                    spellCheck={true}
+                    autoCapitalize="sentences"
+                    keyboardType="default"
                   />
 
                   <Pressable

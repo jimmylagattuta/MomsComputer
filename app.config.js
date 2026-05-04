@@ -21,14 +21,20 @@ export default {
     android: {
       package: "com.momscomputer.app",
       googleServicesFile: "./google-services.json",
+
+      // IMPORTANT:
+      // Keep Android in normal resize mode so chat inputs can sit above the keyboard.
+      // Edge-to-edge can make the app draw behind system/nav/keyboard areas and break this.
+      edgeToEdgeEnabled: false,
+
+      predictiveBackGestureEnabled: false,
+      softwareKeyboardLayoutMode: "resize",
+
       adaptiveIcon: {
         foregroundImage: "./assets/images/android-icon-foreground-v3.png",
         backgroundColor: "#E6F4FE",
         monochromeImage: "./assets/images/android-icon-monochrome.png",
       },
-      edgeToEdgeEnabled: true,
-      predictiveBackGestureEnabled: false,
-      softwareKeyboardLayoutMode: "resize",
     },
 
     web: {

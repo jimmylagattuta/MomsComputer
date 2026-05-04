@@ -1,12 +1,11 @@
 // app/src/subscriptions/PaywallScreen.tsx
 import { Ionicons } from "@expo/vector-icons";
-import Constants from "expo-constants";
 import { useRouter } from "expo-router";
-import * as SecureStore from "expo-secure-store";
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Image,
   Linking,
   Platform,
   Pressable,
@@ -22,47 +21,40 @@ import Purchases, {
 } from "react-native-purchases";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { ENTITLEMENT_ID } from "./constants";
-import {
-  configureRevenueCat,
-  getCustomerInfo,
-  rcIdentifyUser,
-  restorePurchases,
-} from "./rcClient";
-import { getRevenueCatApiKey } from "./rcKeys";
+import { configureRevenueCat } from "./rcClient";
 import { useSubscription } from "./useSubscription";
 
-/**
- * ✅ Public-facing Paywall
- * - Plans shown prominently
- * - Required subscription info shown in-app
- * - Developer tools hidden behind a collapsible dropdown
- * - Auto-dismiss only after RevenueCat identity is settled
- * - TEMP DEBUG FLAG to keep the paywall from immediately navigating away
- */
-
-const DISABLE_AUTO_DISMISS_FOR_DEBUG = true;
 const IS_ANDROID = Platform.OS === "android";
-
-const BRAND = {
-  pageBg: "#FFFFFF",
-  card: "#F3F4F6",
-  card2: "#EEF2F7",
-  border: "#D7DEE8",
-  text: "#0B1220",
-  muted: "#667085",
-  dark: "#111827",
-  blue: "#1E73E8",
-  blueSoft: "#F3F7FF",
-  blueBorder: "#D6E6FF",
-  dangerSoft: "#FEF2F2",
-  successSoft: "#ECFDF3",
-  successBorder: "#ABEFC6",
-  warningSoft: "#FFFAEB",
-  warningBorder: "#FEDF89",
-};
 
 const TERMS_URL = "https://momscomputer.com/terms/";
 const PRIVACY_URL = "https://momscomputer.com/privacy/";
+const MOMS_LOGO_URL =
+  "https://res.cloudinary.com/djtsuktwb/image/upload/v1769703507/ChatGPT_Image_Jan_29_2026_08_00_07_AM_1_3_gtqeo8.jpg";
+
+const BRAND = {
+  pageBg: "#F7FAFF",
+  card: "#FFFFFF",
+  border: "#DDE7F3",
+  borderSoft: "#EAF1F8",
+  text: "#10203A",
+  muted: "#667085",
+  mutedDark: "#475467",
+  blue: "#4E86FF",
+  blueDark: "#2F6CE6",
+  blueSoft: "#EDF4FF",
+  blueBorder: "#D8E6FF",
+  pink: "#F67CB5",
+  pinkSoft: "#FFF0F8",
+  pinkBorder: "#FFD3E8",
+  yellow: "#F6C453",
+  yellowSoft: "#FFF8E7",
+  green: "#12B76A",
+  greenSoft: "#ECFDF3",
+  greenBorder: "#ABEFC6",
+  purple: "#8B7CFF",
+  purpleSoft: "#F1EEFF",
+  shadow: "#0F172A",
+};
 
 function formatPrice(pkg: PurchasesPackage) {
   // @ts-ignore
@@ -70,29 +62,38 @@ function formatPrice(pkg: PurchasesPackage) {
 }
 
 function getDurationText(pkg: PurchasesPackage) {
-  const p: any = (pkg as any)?.product;
-  const sp: any = p?.subscriptionPeriod;
+  const product: any = (pkg as any)?.product;
+  const subscriptionPeriod: any = product?.subscriptionPeriod;
 
-  if (!sp) return "";
+  if (!subscriptionPeriod) return "";
 
-  const unitObj = typeof sp === "object" ? String(sp.unit ?? "").toLowerCase() : "";
-  const valueObj = typeof sp === "object" ? Number(sp.value ?? 0) : 0;
+  const unitFromObject =
+    typeof subscriptionPeriod === "object"
+      ? String(subscriptionPeriod.unit ?? "").toLowerCase()
+      : "";
 
-  if (unitObj && valueObj) {
-    const label =
-      valueObj === 1
-        ? unitObj.replace(/s$/, "")
-        : unitObj.endsWith("s")
-          ? unitObj
-          : `${unitObj}s`;
-    return `${valueObj} ${label}`;
+  const valueFromObject =
+    typeof subscriptionPeriod === "object"
+      ? Number(subscriptionPeriod.value ?? 0)
+      : 0;
+
+  if (unitFromObject && valueFromObject) {
+    const cleanUnit =
+      valueFromObject === 1
+        ? unitFromObject.replace(/s$/, "")
+        : unitFromObject.endsWith("s")
+          ? unitFromObject
+          : `${unitFromObject}s`;
+
+    return `${valueFromObject} ${cleanUnit}`;
   }
 
-  if (typeof sp === "string") {
-    const m = sp.match(/^P(\d+)([DWMY])$/i);
-    if (!m) return "";
-    const value = Number(m[1] ?? 0);
-    const code = String(m[2] ?? "").toUpperCase();
+  if (typeof subscriptionPeriod === "string") {
+    const match = subscriptionPeriod.match(/^P(\d+)([DWMY])$/i);
+    if (!match) return "";
+
+    const value = Number(match[1] ?? 0);
+    const code = String(match[2] ?? "").toUpperCase();
 
     const unit =
       code === "D"
@@ -106,159 +107,22 @@ function getDurationText(pkg: PurchasesPackage) {
               : "";
 
     if (!unit || !value) return "";
+
     return `${value} ${value === 1 ? unit : `${unit}s`}`;
   }
 
   return "";
 }
 
-function getPkgTitle(pkg: PurchasesPackage) {
-  // @ts-ignore
-  return pkg?.product?.title ?? "Subscription";
-}
-
-function getPkgDescription(pkg: PurchasesPackage) {
-  // @ts-ignore
-  return pkg?.product?.description ?? "";
-}
-
-function safeStringify(obj: any, maxLen = 16000) {
-  try {
-    const s = JSON.stringify(obj, null, 2);
-    if (s.length <= maxLen) return s;
-    return `${s.slice(0, maxLen)}\n…(truncated)…`;
-  } catch (e: any) {
-    return `<<json stringify failed: ${String(e?.message ?? e)}>>`;
-  }
-}
-
-function maskKey(key: string | null | undefined) {
-  const k = String(key || "");
-  if (!k) return "(missing)";
-  if (k.length <= 8) return "****";
-  return `${k.slice(0, 4)}…${k.slice(-4)} (len=${k.length})`;
-}
-
-async function getAppUserIdCompat(): Promise<string | null> {
-  try {
-    const maybe = (Purchases as any).getAppUserID?.();
-    const id = typeof maybe?.then === "function" ? await maybe : maybe;
-    if (!id) return null;
-    return String(id);
-  } catch {
-    return null;
-  }
-}
-
-async function getIsAnonymousCompat(): Promise<boolean | null> {
-  try {
-    const fn = (Purchases as any).isAnonymous;
-    if (typeof fn !== "function") return null;
-    const maybe = fn();
-    const val = typeof maybe?.then === "function" ? await maybe : maybe;
-    return typeof val === "boolean" ? val : null;
-  } catch {
-    return null;
-  }
+function getActiveEntitlement(info: CustomerInfo | null) {
+  if (!info) return null;
+  return info?.entitlements?.active?.[ENTITLEMENT_ID] ?? null;
 }
 
 function openUrl(url: string) {
   Linking.openURL(url).catch(() => {
     Alert.alert("Unable to open link", url);
   });
-}
-
-function formatIsoDate(iso?: string | null) {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return String(iso);
-  return `${d.toLocaleString()} (${iso})`;
-}
-
-function getTimeUntil(iso?: string | null) {
-  if (!iso) return "—";
-
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return "—";
-
-  const diff = then - Date.now();
-  if (diff <= 0) return "expired";
-
-  const totalSeconds = Math.floor(diff / 1000);
-  const days = Math.floor(totalSeconds / 86400);
-  const hours = Math.floor((totalSeconds % 86400) / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-
-  if (days > 0) return `${days}d ${hours}h ${minutes}m`;
-  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
-  if (minutes > 0) return `${minutes}m ${seconds}s`;
-  return `${seconds}s`;
-}
-
-function extractSubscriptionStatus(info: CustomerInfo | null) {
-  if (!info) {
-    return {
-      status: "no_customer_info",
-      title: "No customer info",
-      isActive: false,
-      willRenew: null,
-      expirationDate: null,
-      expirationIn: "—",
-      latestPurchaseDate: null,
-      originalPurchaseDate: null,
-      productIdentifier: null,
-      store: null,
-      ownershipType: null,
-      activeSubscriptions: [],
-      allPurchasedProductIds: [],
-    };
-  }
-
-  const ent: any = info?.entitlements?.all?.[ENTITLEMENT_ID];
-  const activeSubscriptions = Array.isArray((info as any)?.activeSubscriptions)
-    ? (info as any).activeSubscriptions
-    : [];
-  const allPurchasedProductIds = Array.isArray((info as any)?.allPurchasedProductIdentifiers)
-    ? (info as any).allPurchasedProductIdentifiers
-    : [];
-
-  if (!ent) {
-    return {
-      status: "no_entitlement_found",
-      title: "Entitlement missing",
-      isActive: false,
-      willRenew: null,
-      expirationDate: null,
-      expirationIn: "—",
-      latestPurchaseDate: null,
-      originalPurchaseDate: null,
-      productIdentifier: null,
-      store: null,
-      ownershipType: null,
-      activeSubscriptions,
-      allPurchasedProductIds,
-    };
-  }
-
-  const isActive = !!ent.isActive;
-  const expirationDate = ent.expirationDate ?? null;
-
-  return {
-    status: isActive ? "active" : "inactive",
-    title: isActive ? "Active" : "Inactive",
-    isActive,
-    willRenew: typeof ent.willRenew === "boolean" ? ent.willRenew : null,
-    expirationDate,
-    expirationIn: getTimeUntil(expirationDate),
-    latestPurchaseDate: ent.latestPurchaseDate ?? null,
-    originalPurchaseDate: ent.originalPurchaseDate ?? null,
-    productIdentifier: ent.productIdentifier ?? null,
-    store: ent.store ?? null,
-    ownershipType: ent.ownershipType ?? null,
-    activeSubscriptions,
-    allPurchasedProductIds,
-  };
 }
 
 export default function PaywallScreen() {
@@ -268,32 +132,34 @@ export default function PaywallScreen() {
   const {
     isPro,
     loading: subLoading,
-    refresh: refreshHook,
-    customerInfo: hookInfo,
+    refresh: refreshSubscription,
+    customerInfo,
     identityReady,
   } = useSubscription();
 
   const [offeringsLoading, setOfferingsLoading] = useState(false);
   const [packages, setPackages] = useState<PurchasesPackage[]>([]);
   const [offeringsError, setOfferingsError] = useState<string | null>(null);
+  const [purchaseLoadingId, setPurchaseLoadingId] = useState<string | null>(null);
 
-  const [devOpen, setDevOpen] = useState(false);
+  const activeEntitlement = useMemo(
+    () => getActiveEntitlement(customerInfo),
+    [customerInfo]
+  );
 
-  const [dbgLoading, setDbgLoading] = useState(false);
-  const [dbgLastUpdated, setDbgLastUpdated] = useState<string | null>(null);
-  const [dbgError, setDbgError] = useState<string | null>(null);
-  const [dbg, setDbg] = useState<any>(null);
-
-  const lastIdentifyRef = useRef<string | null>(null);
+  const mainPackage = packages?.[0] ?? null;
+  const mainPrice = mainPackage ? formatPrice(mainPackage) : "";
+  const mainDuration = mainPackage ? getDurationText(mainPackage) : "";
 
   useEffect(() => {
-    if (DISABLE_AUTO_DISMISS_FOR_DEBUG) return;
     if (!identityReady) return;
 
     if (!subLoading && isPro) {
       try {
         // @ts-ignore
-        if (router?.canGoBack?.()) router.back();
+        if (router?.canGoBack?.()) {
+          router.back();
+        }
       } catch {}
     }
   }, [identityReady, isPro, subLoading, router]);
@@ -305,35 +171,36 @@ export default function PaywallScreen() {
 
     try {
       const configured = await configureRevenueCat();
+
       if (!configured) {
-        setOfferingsError("Purchases aren’t configured yet (missing API key or user id).");
+        setOfferingsError("Subscriptions are not ready yet. Please try again soon.");
         return;
       }
 
       const offerings = await Purchases.getOfferings();
-      const current = offerings?.current;
+      const currentOffering = offerings?.current;
 
-      if (!current) {
-        setOfferingsError(
-          "Plans aren’t available yet. (Offerings.current is null — products may not be fully available in sandbox for this build.)"
-        );
+      if (!currentOffering) {
+        setOfferingsError("The subscription plan is not available yet.");
         return;
       }
 
-      const pkgs = current.availablePackages ?? [];
-      if (!pkgs.length) {
-        setOfferingsError("No subscription packages found in the current offering.");
+      const availablePackages = currentOffering.availablePackages ?? [];
+
+      if (!availablePackages.length) {
+        setOfferingsError("The subscription plan is not available right now.");
         return;
       }
 
-      setPackages(pkgs);
-    } catch (e: any) {
-      const msg =
-        e?.message ??
-        (typeof (e as PurchasesError)?.toString === "function"
-          ? (e as PurchasesError).toString()
-          : "Failed to load plans.");
-      setOfferingsError(String(msg));
+      setPackages(availablePackages);
+    } catch (error: any) {
+      const message =
+        error?.message ??
+        (typeof (error as PurchasesError)?.toString === "function"
+          ? (error as PurchasesError).toString()
+          : "Unable to load the subscription plan.");
+
+      setOfferingsError(String(message));
     } finally {
       setOfferingsLoading(false);
     }
@@ -343,678 +210,323 @@ export default function PaywallScreen() {
     loadOfferings();
   }, [loadOfferings]);
 
-  const header = useMemo(() => {
-    if (!identityReady || subLoading) return "Loading…";
-    if (isPro) return "✅ Premium is active";
-    return "Upgrade to Premium";
-  }, [identityReady, subLoading, isPro]);
-
-  const buildDebugSnapshot = useCallback(async () => {
-    setDbgLoading(true);
-    setDbgError(null);
-
-    try {
-      const nowIso = new Date().toISOString();
-
-      const apiKeyMasked = maskKey(getRevenueCatApiKey());
-      const appOwnership = (Constants as any)?.appOwnership ?? null;
-      const releaseChannel =
-        (Constants as any)?.expoConfig?.extra?.eas?.releaseChannel ??
-        (Constants as any)?.manifest2?.extra?.eas?.releaseChannel ??
-        null;
-
-      const token = await SecureStore.getItemAsync("auth_token");
-      const authUserRaw = await SecureStore.getItemAsync("auth_user");
-      let authUser: any = null;
-      try {
-        authUser = authUserRaw ? JSON.parse(authUserRaw) : null;
-      } catch {
-        authUser = { parseError: true, raw: authUserRaw };
-      }
-
-      const configured = await configureRevenueCat();
-      const appUserId = configured ? await getAppUserIdCompat() : null;
-      const isAnon = configured ? await getIsAnonymousCompat() : null;
-
-      let identifyAttempt: any = null;
-      const dbUserId = authUser?.id != null ? String(authUser.id) : null;
-
-      if (configured && dbUserId) {
-        const shouldAttempt = lastIdentifyRef.current !== dbUserId;
-        if (shouldAttempt) lastIdentifyRef.current = dbUserId;
-
-        try {
-          const infoAfter = await rcIdentifyUser(dbUserId);
-          identifyAttempt = {
-            attempted: true,
-            attemptedNow: shouldAttempt,
-            dbUserId,
-            resultOriginalAppUserId: infoAfter?.originalAppUserId ?? null,
-            activeEntitlements: Object.keys(infoAfter?.entitlements?.active ?? {}),
-          };
-        } catch (e: any) {
-          identifyAttempt = {
-            attempted: true,
-            attemptedNow: shouldAttempt,
-            dbUserId,
-            error: String(e?.message ?? e),
-          };
-        }
-      } else {
-        identifyAttempt = { attempted: false, dbUserId, configured };
-      }
-
-      let directCustomerInfo: CustomerInfo | null = null;
-      let directCustomerInfoErr: any = null;
-      if (configured) {
-        try {
-          directCustomerInfo = await getCustomerInfo();
-        } catch (e: any) {
-          directCustomerInfoErr = String(e?.message ?? e);
-        }
-      }
-
-      let offeringsSnap: any = null;
-      let offeringsSnapErr: any = null;
-      if (configured) {
-        try {
-          const offerings = await Purchases.getOfferings();
-          offeringsSnap = {
-            currentIdentifier: offerings?.current?.identifier ?? null,
-            offeringKeys: Object.keys(offerings?.all ?? {}),
-            currentAvailablePackages:
-              (offerings?.current?.availablePackages ?? []).map((p: any) => ({
-                identifier: p?.identifier,
-                packageType: p?.packageType,
-                productIdentifier: p?.product?.identifier ?? null,
-                productTitle: p?.product?.title ?? null,
-                priceString: p?.product?.priceString ?? null,
-              })) ?? [],
-          };
-        } catch (e: any) {
-          offeringsSnapErr = String(e?.message ?? e);
-        }
-      }
-
-      const hookOriginalId = hookInfo?.originalAppUserId ?? null;
-      const directOriginalId = directCustomerInfo?.originalAppUserId ?? null;
-
-      const hookEnts = Object.keys(hookInfo?.entitlements?.active ?? {});
-      const directEnts = Object.keys(directCustomerInfo?.entitlements?.active ?? {});
-
-      const directIsPro = !!directCustomerInfo?.entitlements?.active?.[ENTITLEMENT_ID];
-      const subStatus = extractSubscriptionStatus(directCustomerInfo);
-
-      const autoDismissReason = (() => {
-        if (DISABLE_AUTO_DISMISS_FOR_DEBUG) {
-          return "Auto-dismiss disabled for debug";
-        }
-        if (!identityReady) return "identityReady=false (paywall should stay open)";
-        if (subLoading) return "Hook still loading (subLoading=true)";
-        if (isPro) return "isPro=true (would dismiss)";
-        return `isPro=false (ENTITLEMENT_ID="${ENTITLEMENT_ID}" not active)`;
-      })();
-
-      const snapshot = {
-        timestamp: nowIso,
-        app: {
-          platform: Platform.OS,
-          appOwnership,
-          releaseChannel,
-          expoVersion: (Constants as any)?.expoVersion ?? null,
-          nativeAppVersion: (Constants as any)?.nativeAppVersion ?? null,
-          nativeBuildVersion: (Constants as any)?.nativeBuildVersion ?? null,
-          extra: {
-            hasRevenuecatExtra: !!(Constants as any)?.expoConfig?.extra?.revenuecat,
-          },
-        },
-        auth: {
-          hasToken: !!token,
-          tokenLen: token ? String(token).length : 0,
-          userFromSecureStore: authUser,
-        },
-        revenuecat: {
-          configured,
-          apiKeyMasked,
-          appUserIdBeforeOrNow: appUserId,
-          isAnonymous: isAnon,
-          identifyAttempt,
-          hook: {
-            loading: subLoading,
-            identityReady,
-            isPro,
-            originalAppUserId: hookOriginalId,
-            activeEntitlements: hookEnts,
-          },
-          direct: {
-            originalAppUserId: directOriginalId,
-            activeEntitlements: directEnts,
-            entitlementId: ENTITLEMENT_ID,
-            directIsPro,
-            error: directCustomerInfoErr,
-          },
-          subscription: subStatus,
-          compare: {
-            hookOriginalId,
-            directOriginalId,
-            sameOriginalId:
-              hookOriginalId && directOriginalId ? hookOriginalId === directOriginalId : null,
-            hookVsDirectEntitlementKeysSame: safeStringify(hookEnts) === safeStringify(directEnts),
-          },
-          offerings: {
-            snapshot: offeringsSnap,
-            error: offeringsSnapErr,
-          },
-          autoDismiss: {
-            disabledForDebug: DISABLE_AUTO_DISMISS_FOR_DEBUG,
-            reason: autoDismissReason,
-          },
-        },
-      };
-
-      setDbg(snapshot);
-      setDbgLastUpdated(nowIso);
-    } catch (e: any) {
-      setDbgError(String(e?.message ?? e));
-    } finally {
-      setDbgLoading(false);
-    }
-  }, [hookInfo, identityReady, isPro, subLoading]);
-
-  useEffect(() => {
-    buildDebugSnapshot();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   const handleClose = () => {
     try {
       // @ts-ignore
-      if (router?.canGoBack?.()) router.back();
-      else router.replace("/(app)");
+      if (router?.canGoBack?.()) {
+        router.back();
+      } else {
+        router.replace("/(app)");
+      }
     } catch {}
   };
 
+  const handlePurchase = async (pkg: PurchasesPackage) => {
+    try {
+      setPurchaseLoadingId(pkg.identifier);
+
+      const configured = await configureRevenueCat();
+
+      if (!configured) {
+        Alert.alert("Not ready", "Subscriptions are not ready yet. Please try again.");
+        return;
+      }
+
+      await Purchases.purchasePackage(pkg);
+      await refreshSubscription();
+
+      Alert.alert(
+        "You are subscribed",
+        "Premium is active. Your paid features are now unlocked."
+      );
+
+      try {
+        // @ts-ignore
+        if (router?.canGoBack?.()) {
+          router.back();
+        } else {
+          router.replace("/(app)");
+        }
+      } catch {}
+    } catch (error: any) {
+      const message = String(error?.message ?? "The subscription did not go through.");
+
+      if (message.toLowerCase().includes("cancel")) return;
+
+      Alert.alert("Subscription error", message);
+    } finally {
+      setPurchaseLoadingId(null);
+    }
+  };
+
   const screenLoading = !identityReady || subLoading;
-  const debugSub = dbg?.revenuecat?.subscription ?? null;
-  const debugOfferings = dbg?.revenuecat?.offerings ?? null;
-  const debugDirect = dbg?.revenuecat?.direct ?? null;
 
   if (screenLoading) {
     return (
       <SafeAreaView style={styles.safeArea} edges={["top", "left", "right", "bottom"]}>
         <View style={styles.center}>
-          <ActivityIndicator />
-          <Text style={styles.loadingTitle}>{header}</Text>
-          <Text style={styles.loadingSub}>Preparing secure purchase options…</Text>
+          <View style={styles.loadingOrb}>
+            <ActivityIndicator size="large" color={BRAND.blue} />
+          </View>
+
+          <Text style={styles.loadingTitle}>Loading Premium</Text>
+          <Text style={styles.loadingSub}>Getting your options ready…</Text>
         </View>
       </SafeAreaView>
     );
   }
 
-  const firstPkg = packages?.[0];
-  const firstPrice = firstPkg ? formatPrice(firstPkg) : "";
-  const firstDuration = firstPkg ? getDurationText(firstPkg) : "";
+  if (isPro) {
+    return (
+      <SafeAreaView style={styles.safeArea} edges={["top", "left", "right", "bottom"]}>
+        <View style={styles.center}>
+          <View style={styles.successOrb}>
+            <Ionicons name="checkmark-circle" size={52} color={BRAND.green} />
+          </View>
+
+          <View style={styles.successLogoWrap}>
+            <Image
+              source={{ uri: MOMS_LOGO_URL }}
+              style={styles.successLogo}
+              resizeMode="cover"
+            />
+          </View>
+
+          <Text style={styles.successTitle}>Premium is active</Text>
+
+          <Text style={styles.successBody}>
+            Your paid features are ready to use.
+          </Text>
+
+          {!!activeEntitlement?.expirationDate && (
+            <Text style={styles.successMeta}>
+              Renews or expires:{" "}
+              {new Date(activeEntitlement.expirationDate).toLocaleDateString()}
+            </Text>
+          )}
+
+          <Pressable
+            onPress={handleClose}
+            style={({ pressed }) => [
+              styles.primaryButtonFull,
+              pressed && styles.primaryButtonPressed,
+            ]}
+          >
+            <Text style={styles.primaryButtonText}>Continue</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safeArea} edges={["top", "left", "right", "bottom"]}>
       <ScrollView
+        showsVerticalScrollIndicator={false}
         contentContainerStyle={[
           styles.container,
           {
-            paddingTop: Math.max(insets.top, IS_ANDROID ? 14 : 18) + 10,
-            paddingBottom: Math.max(insets.bottom, 16) + 24,
+            paddingTop: IS_ANDROID ? Math.max(insets.top, 12) + 6 : 6,
+            paddingBottom: Math.max(insets.bottom, 16) + 28,
           },
         ]}
       >
-        <View style={styles.headerRow}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.h1}>{header}</Text>
-            {!isPro && (
-              <Text style={styles.subText}>
-                Premium unlocks the full “Ask Mom” experience and priority help.
-              </Text>
-            )}
-
-            <Text style={styles.debugLine}>
-              debug: identityReady={String(identityReady)} | subLoading={String(subLoading)} | isPro={String(isPro)} | autoDismissDisabled={String(DISABLE_AUTO_DISMISS_FOR_DEBUG)}
-            </Text>
+        <View style={styles.topBar}>
+          <View style={styles.topBarLeft}>
+            <View style={styles.sparklePill}>
+              <Ionicons name="sparkles" size={14} color={BRAND.purple} />
+              <Text style={styles.sparklePillText}>Premium Features</Text>
+            </View>
           </View>
 
           <Pressable
             onPress={handleClose}
             hitSlop={10}
-            style={({ pressed }) => [styles.closeBtn, pressed && styles.pressed]}
+            style={({ pressed }) => [styles.closeButton, pressed && styles.pressed]}
           >
-            <Text style={styles.closeBtnText}>Close</Text>
+            <Ionicons name="close" size={21} color={BRAND.mutedDark} />
           </Pressable>
         </View>
 
-        {!isPro && (
-          <View style={styles.infoCard}>
-            <Text style={styles.infoTitle}>Subscription details</Text>
+        <View style={styles.heroCard}>
+          <View style={styles.decorBubblePink} />
+          <View style={styles.decorBubbleBlue} />
 
-            <View style={{ height: 8 }} />
-
-            <Text style={styles.infoLine}>
-              <Text style={styles.infoLabel}>Plan: </Text>
-              Premium Monthly
-            </Text>
-
-            <Text style={styles.infoLine}>
-              <Text style={styles.infoLabel}>Length: </Text>
-              {firstDuration || "Monthly"}
-            </Text>
-
-            <Text style={styles.infoLine}>
-              <Text style={styles.infoLabel}>Price: </Text>
-              {firstPrice
-                ? `${firstPrice}${firstDuration ? ` / ${firstDuration}` : ""}`
-                : "Shown on the plan card below"}
-            </Text>
-
-            <View style={{ height: 10 }} />
-
-            <Text style={styles.infoFine}>
-              Payment is charged to your account at confirmation. Subscription auto-renews unless
-              canceled at least 24 hours before the end of the current period. You can manage or
-              cancel in your account settings. Cancel anytime.
-            </Text>
-
-            <View style={{ height: 10 }} />
-
-            <View style={styles.linksRow}>
-              <Pressable
-                onPress={() => openUrl(PRIVACY_URL)}
-                style={({ pressed }) => [styles.linkChip, pressed && styles.pressed]}
-              >
-                <Text style={styles.linkChipText}>Privacy Policy</Text>
-              </Pressable>
-
-              <Pressable
-                onPress={() => openUrl(TERMS_URL)}
-                style={({ pressed }) => [styles.linkChip, pressed && styles.pressed]}
-              >
-                <Text style={styles.linkChipText}>Terms of Use (EULA)</Text>
-              </Pressable>
-            </View>
+          <View style={styles.heroLogoWrap}>
+            <Image
+              source={{ uri: MOMS_LOGO_URL }}
+              style={styles.heroLogo}
+              resizeMode="cover"
+            />
           </View>
-        )}
 
-        <View style={{ height: 14 }} />
-        <Text style={styles.sectionTitle}>Plans</Text>
-        <Text style={styles.sectionSub}>Choose a plan below to start your subscription.</Text>
+          <Text style={styles.heroTitle}>Mom&apos;s Computer</Text>
 
-        <View style={{ height: 12 }} />
+          <Text style={styles.heroSubTitle}>Ask Mom is free</Text>
 
-        {offeringsLoading ? (
-          <View style={styles.centerInline}>
-            <ActivityIndicator />
-            <Text style={styles.inlineText}>Loading plans…</Text>
+          <Text style={styles.heroBody}>
+            Upgrade to access extra support features.
+          </Text>
+
+          <View style={styles.freePill}>
+            <Ionicons name="heart" size={16} color={BRAND.pink} />
+            <Text style={styles.freePillText}>You can keep using Ask Mom for free</Text>
           </View>
-        ) : offeringsError ? (
-          <View style={styles.errorCard}>
-            <Text style={styles.errorTitle}>Plans unavailable</Text>
-            <Text style={styles.errorMsg}>{offeringsError}</Text>
+        </View>
 
-            <View style={{ height: 12 }} />
-
-            <Pressable
-              onPress={loadOfferings}
-              style={({ pressed }) => [styles.primaryBtn, pressed && styles.primaryBtnPressed]}
-            >
-              <Text style={styles.primaryBtnText}>Try again</Text>
-            </Pressable>
-
-            <View style={{ height: 8 }} />
-
-            <Pressable
-              onPress={async () => {
-                setDevOpen(true);
-                await buildDebugSnapshot();
-              }}
-              style={({ pressed }) => [styles.secondaryBtn, pressed && styles.pressed]}
-            >
-              <Text style={styles.secondaryBtnText}>Open developer tools</Text>
-            </Pressable>
-          </View>
-        ) : (
-          <View style={{ gap: 12 }}>
-            {packages.map((pkg) => {
-              const title = getPkgTitle(pkg);
-              const desc = getPkgDescription(pkg);
-              const price = formatPrice(pkg);
-              const duration = getDurationText(pkg);
-
-              return (
-                <View key={pkg.identifier} style={styles.planCard}>
-                  <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 10 }}>
-                    <View style={styles.planIcon}>
-                      <Ionicons name="sparkles" size={16} color={BRAND.blue} />
-                    </View>
-
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.planTitle}>{title}</Text>
-                      {!!desc && <Text style={styles.planDesc}>{desc}</Text>}
-                      <Text style={styles.planPrice}>
-                        {price}
-                        {!!duration ? (
-                          <Text style={styles.planPriceMuted}> / {duration}</Text>
-                        ) : null}
-                      </Text>
-                    </View>
-                  </View>
-
-                  <View style={{ height: 12 }} />
-
-                  <Pressable
-                    onPress={async () => {
-                      try {
-                        const configured = await configureRevenueCat();
-                        if (!configured) {
-                          Alert.alert("Not ready", "Purchases aren’t configured yet.");
-                          return;
-                        }
-
-                        await Purchases.purchasePackage(pkg);
-                        await refreshHook();
-                        await buildDebugSnapshot();
-
-                        Alert.alert(
-                          "Purchase completed",
-                          "If Premium didn’t activate, open Developer tools and check entitlements."
-                        );
-                      } catch (e: any) {
-                        const msg = String(e?.message ?? "Purchase failed.");
-                        if (msg.toLowerCase().includes("cancel")) return;
-                        Alert.alert("Purchase error", msg);
-                        try {
-                          await buildDebugSnapshot();
-                        } catch {}
-                      }
-                    }}
-                    style={({ pressed }) => [styles.primaryBtn, pressed && styles.primaryBtnPressed]}
-                  >
-                    <Text style={styles.primaryBtnText}>Subscribe</Text>
-                  </Pressable>
-                </View>
-              );
-            })}
-          </View>
-        )}
-
-        <View style={{ height: 14 }} />
-        <Pressable
-          onPress={async () => {
-            try {
-              await restorePurchases();
-              await refreshHook();
-              await buildDebugSnapshot();
-              Alert.alert("Restored", "Purchases restored (if any).");
-            } catch (e: any) {
-              Alert.alert("Restore failed", String(e?.message ?? "Restore failed."));
-              try {
-                await buildDebugSnapshot();
-              } catch {}
-            }
-          }}
-          style={({ pressed }) => [styles.secondaryBtn, pressed && styles.pressed]}
-        >
-          <Text style={styles.secondaryBtnText}>Restore purchases</Text>
-        </Pressable>
-
-        <View style={{ height: 18 }} />
-        <Pressable
-          onPress={async () => {
-            const next = !devOpen;
-            setDevOpen(next);
-            if (next) {
-              await buildDebugSnapshot();
-            }
-          }}
-          style={({ pressed }) => [styles.devToggle, pressed && styles.pressed]}
-        >
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-            <View style={styles.devDot} />
-            <Text style={styles.devToggleText}>Developer tools</Text>
-          </View>
-          <Ionicons
-            name={devOpen ? "chevron-up" : "chevron-down"}
-            size={18}
-            color={BRAND.muted}
-          />
-        </Pressable>
-
-        {devOpen && (
-          <View style={styles.devPanel}>
-            <Text style={styles.devTitle}>Developer tools</Text>
-            <Text style={styles.devSub}>
-              Debug snapshot, offerings reload, force-identify, and live subscription status all
-              live here.
-            </Text>
-
-            <View style={{ height: 12 }} />
-
-            <View style={styles.devActionsRow}>
-              <Pressable
-                onPress={async () => {
-                  try {
-                    await refreshHook();
-                    await buildDebugSnapshot();
-                    Alert.alert("Refreshed", "Subscription + debug info refreshed.");
-                  } catch {}
-                }}
-                style={({ pressed }) => [styles.devBtnDark, pressed && styles.devBtnPressed]}
-              >
-                <Text style={styles.devBtnDarkText}>
-                  {dbgLoading ? "Refreshing…" : "Refresh Debug"}
-                </Text>
-              </Pressable>
-
-              <Pressable
-                onPress={async () => {
-                  await loadOfferings();
-                  await buildDebugSnapshot();
-                }}
-                style={({ pressed }) => [styles.devBtnLight, pressed && styles.devBtnPressed]}
-              >
-                <Text style={styles.devBtnLightText}>Reload Offerings</Text>
-              </Pressable>
+        <View style={styles.comparisonWrap}>
+          <View style={[styles.infoCard, styles.freeCard]}>
+            <View style={styles.infoHeaderRow}>
+              <View style={[styles.iconCircle, styles.iconCirclePink]}>
+                <Ionicons name="chatbubble-ellipses" size={20} color={BRAND.pink} />
+              </View>
+              <Text style={styles.infoCardTitle}>Free</Text>
             </View>
 
-            <View style={{ height: 10 }} />
+            <Text style={styles.infoCardLead}>Included with the app</Text>
 
-            <Pressable
-              onPress={async () => {
-                try {
-                  const authUserRaw = await SecureStore.getItemAsync("auth_user");
-                  const u = authUserRaw ? JSON.parse(authUserRaw) : null;
-                  const id = u?.id != null ? String(u.id) : null;
-
-                  if (!id) {
-                    Alert.alert("No DB user id", "auth_user.id was missing from SecureStore.");
-                    return;
-                  }
-
-                  await rcIdentifyUser(id);
-                  await refreshHook();
-                  await buildDebugSnapshot();
-
-                  Alert.alert("Forced identify", `Attempted RevenueCat logIn("${id}").`);
-                } catch (e: any) {
-                  Alert.alert("Force identify failed", String(e?.message ?? e));
-                  try {
-                    await buildDebugSnapshot();
-                  } catch {}
-                }
-              }}
-              style={({ pressed }) => [styles.devBtnLight, pressed && styles.devBtnPressed]}
-            >
-              <Text style={styles.devBtnLightText}>Force Identify (DB user id)</Text>
-            </Pressable>
-
-            {dbgError ? (
-              <View style={styles.devError}>
-                <Text style={styles.devErrorTitle}>Debug error</Text>
-                <Text style={styles.devErrorMsg}>{dbgError}</Text>
-              </View>
-            ) : null}
-
-            <View style={{ height: 14 }} />
-
-            <View
-              style={[
-                styles.devSummaryCard,
-                debugSub?.isActive
-                  ? styles.devSummarySuccess
-                  : debugSub?.status === "inactive"
-                    ? styles.devSummaryWarning
-                    : null,
-              ]}
-            >
-              <Text style={styles.devSectionTitle}>Subscription state</Text>
-
-              <View style={{ height: 10 }} />
-
-              <View style={styles.devRow}>
-                <Text style={styles.devKey}>Status</Text>
-                <Text style={styles.devValueStrong}>{debugSub?.title ?? "—"}</Text>
-              </View>
-
-              <View style={styles.devRow}>
-                <Text style={styles.devKey}>Entitlement</Text>
-                <Text style={styles.devValue}>{ENTITLEMENT_ID}</Text>
-              </View>
-
-              <View style={styles.devRow}>
-                <Text style={styles.devKey}>Will renew</Text>
-                <Text style={styles.devValue}>
-                  {typeof debugSub?.willRenew === "boolean"
-                    ? debugSub.willRenew
-                      ? "YES"
-                      : "NO"
-                    : "—"}
-                </Text>
-              </View>
-
-              <View style={styles.devRow}>
-                <Text style={styles.devKey}>Product</Text>
-                <Text style={styles.devValue}>{debugSub?.productIdentifier ?? "—"}</Text>
-              </View>
-
-              <View style={styles.devRow}>
-                <Text style={styles.devKey}>Store</Text>
-                <Text style={styles.devValue}>{debugSub?.store ?? "—"}</Text>
-              </View>
-
-              <View style={styles.devRow}>
-                <Text style={styles.devKey}>Ownership</Text>
-                <Text style={styles.devValue}>{debugSub?.ownershipType ?? "—"}</Text>
-              </View>
-
-              <View style={styles.devRow}>
-                <Text style={styles.devKey}>Expires</Text>
-                <Text style={styles.devValue}>{formatIsoDate(debugSub?.expirationDate)}</Text>
-              </View>
-
-              <View style={styles.devRow}>
-                <Text style={styles.devKey}>Time left</Text>
-                <Text style={styles.devValueStrong}>{debugSub?.expirationIn ?? "—"}</Text>
-              </View>
-
-              <View style={styles.devRow}>
-                <Text style={styles.devKey}>Latest purchase</Text>
-                <Text style={styles.devValue}>{formatIsoDate(debugSub?.latestPurchaseDate)}</Text>
-              </View>
-
-              <View style={styles.devRow}>
-                <Text style={styles.devKey}>Original purchase</Text>
-                <Text style={styles.devValue}>{formatIsoDate(debugSub?.originalPurchaseDate)}</Text>
-              </View>
-
-              <View style={styles.devRow}>
-                <Text style={styles.devKey}>RC says Pro</Text>
-                <Text style={styles.devValue}>{debugDirect?.directIsPro ? "YES" : "NO"}</Text>
+            <View style={styles.featureList}>
+              <View style={styles.featureRow}>
+                <Ionicons name="checkmark-circle" size={20} color={BRAND.green} />
+                <Text style={styles.featureText}>Ask Mom</Text>
               </View>
             </View>
+          </View>
 
-            <View style={{ height: 12 }} />
-
-            <View style={styles.devSummaryCard}>
-              <Text style={styles.devSectionTitle}>Entitlements & products</Text>
-
-              <View style={{ height: 10 }} />
-
-              <Text style={styles.devBlockLabel}>Active entitlements</Text>
-              <Text selectable style={styles.monoSmall}>
-                {safeStringify(debugDirect?.activeEntitlements ?? [])}
-              </Text>
-
-              <View style={{ height: 10 }} />
-
-              <Text style={styles.devBlockLabel}>Active subscriptions</Text>
-              <Text selectable style={styles.monoSmall}>
-                {safeStringify(debugSub?.activeSubscriptions ?? [])}
-              </Text>
-
-              <View style={{ height: 10 }} />
-
-              <Text style={styles.devBlockLabel}>All purchased product IDs</Text>
-              <Text selectable style={styles.monoSmall}>
-                {safeStringify(debugSub?.allPurchasedProductIds ?? [])}
-              </Text>
+          <View style={[styles.infoCard, styles.premiumCard]}>
+            <View style={styles.infoHeaderRow}>
+              <View style={[styles.iconCircle, styles.iconCircleBlue]}>
+                <Ionicons name="diamond" size={20} color={BRAND.blue} />
+              </View>
+              <Text style={styles.infoCardTitle}>Premium</Text>
             </View>
 
-            <View style={{ height: 12 }} />
+            <Text style={styles.infoCardLead}>Unlock the other features</Text>
 
-            <View style={styles.devSummaryCard}>
-              <Text style={styles.devSectionTitle}>Offerings</Text>
-
-              <View style={{ height: 10 }} />
-
-              <View style={styles.devRow}>
-                <Text style={styles.devKey}>Current offering</Text>
-                <Text style={styles.devValue}>{debugOfferings?.snapshot?.currentIdentifier ?? "—"}</Text>
+            <View style={styles.featureList}>
+              <View style={styles.featureRow}>
+                <Ionicons name="checkmark-circle" size={20} color={BRAND.green} />
+                <Text style={styles.featureText}>Text Mom</Text>
               </View>
 
-              <View style={styles.devRow}>
-                <Text style={styles.devKey}>Offering keys</Text>
-                <Text style={styles.devValue}>
-                  {Array.isArray(debugOfferings?.snapshot?.offeringKeys)
-                    ? debugOfferings.snapshot.offeringKeys.join(", ") || "—"
-                    : "—"}
-                </Text>
+              <View style={styles.featureRow}>
+                <Ionicons name="checkmark-circle" size={20} color={BRAND.green} />
+                <Text style={styles.featureText}>Call Mom</Text>
               </View>
 
-              <View style={{ height: 8 }} />
+              <View style={styles.featureRow}>
+                <Ionicons name="checkmark-circle" size={20} color={BRAND.green} />
+                <Text style={styles.featureText}>Extra support features</Text>
+              </View>
+            </View>
+          </View>
+        </View>
 
-              <Text style={styles.devBlockLabel}>Current available packages</Text>
-              <Text selectable style={styles.monoSmall}>
-                {safeStringify(debugOfferings?.snapshot?.currentAvailablePackages ?? [])}
-              </Text>
+        <View style={styles.priceCard}>
+          <View style={styles.priceTopRow}>
+            <View>
+              <Text style={styles.priceLabel}>Premium Subscription</Text>
 
-              {!!debugOfferings?.error && (
-                <>
-                  <View style={{ height: 10 }} />
-                  <Text style={styles.devBlockLabel}>Offerings error</Text>
-                  <Text selectable style={styles.monoSmall}>
-                    {String(debugOfferings.error)}
+              {offeringsLoading ? (
+                <Text style={styles.priceLoadingText}>Loading price…</Text>
+              ) : (
+                <View style={styles.priceRow}>
+                  <Text style={styles.priceText}>{mainPrice || "$9.99"}</Text>
+                  <Text style={styles.priceSubtext}>
+                    {mainDuration ? ` / ${mainDuration}` : " / month"}
                   </Text>
-                </>
+                </View>
               )}
             </View>
 
-            <View style={{ height: 12 }} />
-
-            <View style={styles.devSnapshotCard}>
-              <Text style={styles.devSnapshotTitle}>🔎 Raw Debug Snapshot</Text>
-              <Text style={styles.devSnapshotSub}>Last updated: {dbgLastUpdated ?? "—"}</Text>
-              <View style={{ height: 10 }} />
-              <Text selectable style={styles.mono}>
-                {dbg ? safeStringify(dbg) : "(no debug snapshot yet)"}
-              </Text>
+            <View style={styles.priceBadge}>
+              <Ionicons name="star" size={14} color={BRAND.yellow} />
+              <Text style={styles.priceBadgeText}>Simple</Text>
             </View>
           </View>
-        )}
+
+          {!!offeringsError ? (
+            <View style={styles.errorWrap}>
+              <Text style={styles.errorTitle}>Subscription unavailable</Text>
+              <Text style={styles.errorText}>{offeringsError}</Text>
+
+              <Pressable
+                onPress={loadOfferings}
+                style={({ pressed }) => [
+                  styles.secondaryButton,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <Text style={styles.secondaryButtonText}>Try again</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <>
+              <Text style={styles.planHelpText}>
+                Payment is handled securely by Apple or Google. You can cancel anytime
+                in your account settings.
+              </Text>
+
+              <Pressable
+                onPress={() => mainPackage && handlePurchase(mainPackage)}
+                disabled={!mainPackage || !!purchaseLoadingId || offeringsLoading}
+                style={({ pressed }) => [
+                  styles.primaryButtonFull,
+                  pressed &&
+                    !purchaseLoadingId &&
+                    !!mainPackage &&
+                    !offeringsLoading &&
+                    styles.primaryButtonPressed,
+                  (!mainPackage || !!purchaseLoadingId || offeringsLoading) &&
+                    styles.disabledButton,
+                ]}
+              >
+                {purchaseLoadingId === mainPackage?.identifier ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.primaryButtonText}>
+                    Subscribe{mainPrice ? ` for ${mainPrice}` : ""}
+                  </Text>
+                )}
+              </Pressable>
+            </>
+          )}
+        </View>
+
+        <Pressable
+          onPress={handleClose}
+          style={({ pressed }) => [
+            styles.freeContinueButton,
+            pressed && styles.pressed,
+          ]}
+        >
+          <Text style={styles.freeContinueButtonText}>Continue with free Ask Mom</Text>
+        </Pressable>
+
+        <View style={styles.noteCard}>
+          <Ionicons name="information-circle-outline" size={20} color={BRAND.blue} />
+          <Text style={styles.noteText}>
+            Ask Mom stays free. Premium is only for the extra support features.
+          </Text>
+        </View>
+
+        <View style={styles.legalLinksRow}>
+          <Pressable
+            onPress={() => openUrl(PRIVACY_URL)}
+            style={({ pressed }) => [styles.legalLink, pressed && styles.pressed]}
+          >
+            <Text style={styles.legalLinkText}>Privacy Policy</Text>
+          </Pressable>
+
+          <View style={styles.legalDot} />
+
+          <Pressable
+            onPress={() => openUrl(TERMS_URL)}
+            style={({ pressed }) => [styles.legalLink, pressed && styles.pressed]}
+          >
+            <Text style={styles.legalLinkText}>Terms</Text>
+          </Pressable>
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -1027,7 +539,7 @@ const styles = StyleSheet.create({
   },
 
   container: {
-    paddingHorizontal: 16,
+    paddingHorizontal: 18,
     backgroundColor: BRAND.pageBg,
   },
 
@@ -1035,420 +547,548 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    padding: 20,
+    padding: 24,
     backgroundColor: BRAND.pageBg,
   },
 
+  loadingOrb: {
+    width: 82,
+    height: 82,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: BRAND.card,
+    borderWidth: 1,
+    borderColor: BRAND.blueBorder,
+    shadowColor: BRAND.shadow,
+    shadowOpacity: 0.08,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 4,
+  },
+
   loadingTitle: {
-    marginTop: 10,
-    fontSize: 18,
-    fontWeight: "800",
+    marginTop: 18,
     color: BRAND.text,
+    fontSize: 22,
+    fontWeight: "900",
+    textAlign: "center",
   },
 
   loadingSub: {
     marginTop: 8,
     color: BRAND.muted,
+    fontSize: 16,
+    lineHeight: 22,
     textAlign: "center",
   },
 
-  headerRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 12,
+  successOrb: {
+    width: 88,
+    height: 88,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: BRAND.greenSoft,
+    borderWidth: 1,
+    borderColor: BRAND.greenBorder,
+    marginBottom: 14,
   },
 
-  h1: {
-    fontSize: 24,
-    fontWeight: "900",
+  successLogoWrap: {
+    width: "100%",
+    height: 120,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 16,
+    overflow: "hidden",
+  },
+
+  successLogo: {
+    width: "100%",
+    height: "100%",
+    backgroundColor: "transparent",
+  },
+
+  successTitle: {
     color: BRAND.text,
+    fontSize: 26,
+    fontWeight: "900",
+    textAlign: "center",
   },
 
-  subText: {
+  successBody: {
     marginTop: 8,
     color: BRAND.muted,
-    lineHeight: 18,
+    fontSize: 17,
+    lineHeight: 24,
+    textAlign: "center",
   },
 
-  debugLine: {
-    marginTop: 8,
-    color: "#B42318",
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: "700",
+  successMeta: {
+    marginTop: 10,
+    color: BRAND.mutedDark,
+    fontSize: 14,
+    textAlign: "center",
   },
 
-  closeBtn: {
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 12,
-    backgroundColor: BRAND.card2,
+  topBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 14,
+  },
+
+  topBarLeft: {
+    flex: 1,
+  },
+
+  sparklePill: {
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+    backgroundColor: BRAND.purpleSoft,
     borderWidth: 1,
-    borderColor: BRAND.border,
+    borderColor: "#DDD8FF",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
   },
 
-  closeBtnText: {
+  sparklePillText: {
+    color: BRAND.purple,
+    fontSize: 12,
     fontWeight: "900",
-    color: BRAND.text,
+    letterSpacing: 0.2,
+  },
+
+  closeButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: BRAND.card,
+    borderWidth: 1,
+    borderColor: BRAND.borderSoft,
   },
 
   pressed: {
-    opacity: 0.92,
+    opacity: 0.9,
     transform: [{ scale: 0.99 }],
   },
 
+  heroCard: {
+    position: "relative",
+    overflow: "hidden",
+    alignItems: "center",
+    paddingTop: 0,
+    paddingBottom: 24,
+    paddingHorizontal: 20,
+    borderRadius: 30,
+    backgroundColor: BRAND.card,
+    borderWidth: 1,
+    borderColor: BRAND.borderSoft,
+    shadowColor: BRAND.shadow,
+    shadowOpacity: 0.08,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 4,
+  },
+
+  decorBubblePink: {
+    position: "absolute",
+    top: 70,
+    right: -48,
+    width: 150,
+    height: 150,
+    borderRadius: 999,
+    backgroundColor: BRAND.pinkSoft,
+    zIndex: 1,
+  },
+
+  decorBubbleBlue: {
+    position: "absolute",
+    bottom: -34,
+    left: -18,
+    width: 130,
+    height: 130,
+    borderRadius: 999,
+    backgroundColor: BRAND.blueSoft,
+    zIndex: 1,
+  },
+
+  heroLogoWrap: {
+    alignSelf: "stretch",
+    marginLeft: -20,
+    marginRight: -20,
+    marginTop: 0,
+    marginBottom: 18,
+    paddingHorizontal: 0,
+    height: 172,
+    overflow: "hidden",
+    zIndex: 2,
+    backgroundColor: "#FFFFFF",
+  },
+
+  heroLogo: {
+    width: "100%",
+    height: "100%",
+    backgroundColor: "transparent",
+  },
+
+  heroTitle: {
+    color: BRAND.text,
+    fontSize: IS_ANDROID ? 28 : 30,
+    lineHeight: IS_ANDROID ? 34 : 36,
+    fontWeight: "900",
+    textAlign: "center",
+    letterSpacing: -0.4,
+    zIndex: 2,
+  },
+
+  heroSubTitle: {
+    marginTop: 6,
+    color: BRAND.blueDark,
+    fontSize: 20,
+    fontWeight: "900",
+    textAlign: "center",
+    zIndex: 2,
+  },
+
+  heroBody: {
+    marginTop: 10,
+    color: BRAND.muted,
+    fontSize: 17,
+    lineHeight: 24,
+    textAlign: "center",
+    maxWidth: 320,
+    zIndex: 2,
+  },
+
+  freePill: {
+    marginTop: 18,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: BRAND.pinkSoft,
+    borderWidth: 1,
+    borderColor: BRAND.pinkBorder,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 999,
+    zIndex: 2,
+  },
+
+  freePillText: {
+    color: "#B53A73",
+    fontSize: 14,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+
+  comparisonWrap: {
+    marginTop: 16,
+    gap: 14,
+  },
+
   infoCard: {
-    marginTop: 14,
-    padding: 14,
-    borderRadius: 14,
+    padding: 18,
+    borderRadius: 24,
+    borderWidth: 1,
+    shadowColor: BRAND.shadow,
+    shadowOpacity: 0.05,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 2,
+  },
+
+  freeCard: {
+    backgroundColor: "#FFFFFF",
+    borderColor: BRAND.pinkBorder,
+  },
+
+  premiumCard: {
+    backgroundColor: "#FFFFFF",
+    borderColor: BRAND.blueBorder,
+  },
+
+  infoHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 8,
+  },
+
+  iconCircle: {
+    width: 42,
+    height: 42,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  iconCirclePink: {
+    backgroundColor: BRAND.pinkSoft,
+    borderWidth: 1,
+    borderColor: BRAND.pinkBorder,
+  },
+
+  iconCircleBlue: {
     backgroundColor: BRAND.blueSoft,
     borderWidth: 1,
     borderColor: BRAND.blueBorder,
   },
 
-  infoTitle: {
-    fontSize: 15,
+  infoCardTitle: {
+    color: BRAND.text,
+    fontSize: 20,
     fontWeight: "900",
-    color: BRAND.text,
   },
 
-  infoLine: {
-    color: BRAND.text,
-    lineHeight: 18,
-  },
-
-  infoLabel: {
-    fontWeight: "900",
-    color: BRAND.text,
-  },
-
-  infoFine: {
+  infoCardLead: {
     color: BRAND.muted,
-    lineHeight: 18,
+    fontSize: 15,
+    lineHeight: 21,
+    marginBottom: 12,
   },
 
-  linksRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
+  featureList: {
     gap: 10,
   },
 
-  linkChip: {
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 999,
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1,
-    borderColor: BRAND.blueBorder,
-  },
-
-  linkChipText: {
-    fontWeight: "900",
-    color: BRAND.blue,
-  },
-
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: "900",
-    color: BRAND.text,
-  },
-
-  sectionSub: {
-    marginTop: 6,
-    color: BRAND.muted,
-    lineHeight: 18,
-  },
-
-  centerInline: {
-    paddingVertical: 18,
+  featureRow: {
+    flexDirection: "row",
     alignItems: "center",
+    gap: 10,
   },
 
-  inlineText: {
+  featureText: {
+    flex: 1,
+    color: BRAND.text,
+    fontSize: 16,
+    lineHeight: 22,
+    fontWeight: "800",
+  },
+
+  priceCard: {
+    marginTop: 16,
+    padding: 20,
+    borderRadius: 26,
+    backgroundColor: BRAND.card,
+    borderWidth: 1,
+    borderColor: BRAND.borderSoft,
+    shadowColor: BRAND.shadow,
+    shadowOpacity: 0.06,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 3,
+  },
+
+  priceTopRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 10,
+    marginBottom: 10,
+  },
+
+  priceLabel: {
+    color: BRAND.mutedDark,
+    fontSize: 15,
+    fontWeight: "900",
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  },
+
+  priceLoadingText: {
     marginTop: 10,
     color: BRAND.muted,
-  },
-
-  errorCard: {
-    padding: 14,
-    borderRadius: 14,
-    backgroundColor: BRAND.card,
-    borderWidth: 1,
-    borderColor: BRAND.border,
-  },
-
-  errorTitle: {
-    fontWeight: "900",
     fontSize: 16,
-    color: BRAND.text,
   },
 
-  errorMsg: {
+  priceRow: {
+    flexDirection: "row",
+    alignItems: "flex-end",
     marginTop: 8,
+  },
+
+  priceText: {
+    color: BRAND.text,
+    fontSize: 36,
+    fontWeight: "900",
+    letterSpacing: -0.8,
+  },
+
+  priceSubtext: {
     color: BRAND.muted,
-    lineHeight: 18,
+    fontSize: 17,
+    fontWeight: "800",
+    paddingBottom: 7,
+    marginLeft: 6,
   },
 
-  planCard: {
-    padding: 14,
-    borderRadius: 14,
-    backgroundColor: BRAND.card,
+  priceBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: BRAND.yellowSoft,
     borderWidth: 1,
-    borderColor: BRAND.border,
+    borderColor: "#F7E2A6",
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 999,
   },
 
-  planIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: 999,
-    backgroundColor: "#FFFFFF",
+  priceBadgeText: {
+    color: "#B48312",
+    fontSize: 12,
+    fontWeight: "900",
+  },
+
+  planHelpText: {
+    color: BRAND.muted,
+    fontSize: 15,
+    lineHeight: 21,
+    marginTop: 2,
+  },
+
+  primaryButtonFull: {
+    width: "100%",
+    minHeight: 56,
+    borderRadius: 18,
+    backgroundColor: BRAND.blue,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 16,
+    shadowColor: BRAND.blue,
+    shadowOpacity: 0.2,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 3,
+    marginTop: 18,
+  },
+
+  primaryButtonPressed: {
+    backgroundColor: BRAND.blueDark,
+    transform: [{ scale: 0.99 }],
+  },
+
+  primaryButtonText: {
+    color: "#FFFFFF",
+    fontSize: 17,
+    fontWeight: "900",
+    letterSpacing: 0.2,
+    textAlign: "center",
+  },
+
+  disabledButton: {
+    opacity: 0.65,
+  },
+
+  secondaryButton: {
+    alignSelf: "center",
+    minHeight: 48,
+    borderRadius: 16,
+    backgroundColor: BRAND.blueSoft,
     borderWidth: 1,
     borderColor: BRAND.blueBorder,
     alignItems: "center",
     justifyContent: "center",
+    paddingHorizontal: 18,
+    marginTop: 14,
   },
 
-  planTitle: {
-    fontSize: 16,
+  secondaryButtonText: {
+    color: BRAND.blue,
+    fontSize: 15,
     fontWeight: "900",
-    color: BRAND.text,
   },
 
-  planDesc: {
-    marginTop: 6,
+  errorWrap: {
+    paddingTop: 6,
+  },
+
+  errorTitle: {
+    color: BRAND.text,
+    fontSize: 19,
+    fontWeight: "900",
+    textAlign: "center",
+    marginBottom: 6,
+  },
+
+  errorText: {
     color: BRAND.muted,
-    lineHeight: 18,
+    fontSize: 15,
+    lineHeight: 21,
+    textAlign: "center",
   },
 
-  planPrice: {
-    marginTop: 10,
-    fontSize: 16,
-    fontWeight: "900",
-    color: BRAND.text,
-  },
-
-  planPriceMuted: {
-    fontWeight: "900",
-    color: BRAND.muted,
-  },
-
-  primaryBtn: {
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    borderRadius: 12,
-    backgroundColor: BRAND.dark,
-    alignSelf: "flex-start",
-  },
-
-  primaryBtnPressed: {
-    opacity: 0.92,
-    transform: [{ scale: 0.99 }],
-  },
-
-  primaryBtnText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
-
-  secondaryBtn: {
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    borderRadius: 12,
-    backgroundColor: "#E5E7EB",
-    alignSelf: "flex-start",
-  },
-
-  secondaryBtnText: {
-    fontWeight: "900",
-    color: BRAND.text,
-  },
-
-  devToggle: {
-    width: "100%",
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    borderRadius: 14,
+  freeContinueButton: {
+    marginTop: 14,
+    minHeight: 54,
+    borderRadius: 18,
     backgroundColor: "#FFFFFF",
     borderWidth: 1,
     borderColor: BRAND.border,
-    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
+    justifyContent: "center",
+    paddingHorizontal: 16,
   },
 
-  devDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 999,
-    backgroundColor: BRAND.blue,
-  },
-
-  devToggleText: {
-    fontWeight: "900",
+  freeContinueButtonText: {
     color: BRAND.text,
-  },
-
-  devPanel: {
-    marginTop: 12,
-    padding: 14,
-    borderRadius: 14,
-    backgroundColor: BRAND.card2,
-    borderWidth: 1,
-    borderColor: BRAND.border,
-  },
-
-  devTitle: {
     fontSize: 16,
     fontWeight: "900",
-    color: BRAND.text,
+    textAlign: "center",
   },
 
-  devSub: {
-    marginTop: 6,
-    color: BRAND.muted,
-    lineHeight: 18,
-  },
-
-  devActionsRow: {
+  noteCard: {
+    marginTop: 14,
+    padding: 15,
+    borderRadius: 18,
+    backgroundColor: BRAND.blueSoft,
+    borderWidth: 1,
+    borderColor: BRAND.blueBorder,
     flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+  },
+
+  noteText: {
+    flex: 1,
+    color: BRAND.blueDark,
+    fontSize: 15,
+    lineHeight: 21,
+    fontWeight: "800",
+  },
+
+  legalLinksRow: {
+    marginTop: 18,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
     flexWrap: "wrap",
     gap: 10,
   },
 
-  devBtnDark: {
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    borderRadius: 12,
-    backgroundColor: BRAND.dark,
-    alignSelf: "flex-start",
+  legalLink: {
+    paddingVertical: 6,
+    paddingHorizontal: 4,
   },
 
-  devBtnDarkText: {
-    color: "#FFFFFF",
-    fontWeight: "900",
-  },
-
-  devBtnLight: {
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    borderRadius: 12,
-    backgroundColor: "#E5E7EB",
-    alignSelf: "flex-start",
-  },
-
-  devBtnLightText: {
-    fontWeight: "900",
-    color: BRAND.text,
-  },
-
-  devBtnPressed: {
-    opacity: 0.92,
-    transform: [{ scale: 0.99 }],
-  },
-
-  devError: {
-    marginTop: 12,
-    padding: 12,
-    borderRadius: 12,
-    backgroundColor: BRAND.dangerSoft,
-    borderWidth: 1,
-    borderColor: "#FECACA",
-  },
-
-  devErrorTitle: {
-    fontWeight: "900",
-    color: BRAND.text,
-  },
-
-  devErrorMsg: {
-    marginTop: 6,
-    color: BRAND.text,
-    opacity: 0.9,
-  },
-
-  devSummaryCard: {
-    padding: 12,
-    borderRadius: 12,
-    backgroundColor: "#F8FAFC",
-    borderWidth: 1,
-    borderColor: BRAND.border,
-  },
-
-  devSummarySuccess: {
-    backgroundColor: BRAND.successSoft,
-    borderColor: BRAND.successBorder,
-  },
-
-  devSummaryWarning: {
-    backgroundColor: BRAND.warningSoft,
-    borderColor: BRAND.warningBorder,
-  },
-
-  devSectionTitle: {
-    fontWeight: "900",
-    fontSize: 15,
-    color: BRAND.text,
-  },
-
-  devRow: {
-    marginTop: 6,
-  },
-
-  devKey: {
-    fontSize: 12,
-    color: BRAND.muted,
-    fontWeight: "700",
-    marginBottom: 2,
-  },
-
-  devValue: {
+  legalLinkText: {
+    color: BRAND.blue,
     fontSize: 14,
-    color: BRAND.text,
-  },
-
-  devValueStrong: {
-    fontSize: 14,
-    color: BRAND.text,
     fontWeight: "900",
   },
 
-  devBlockLabel: {
-    fontSize: 12,
-    color: BRAND.muted,
-    fontWeight: "800",
-    marginBottom: 4,
-  },
-
-  devSnapshotCard: {
-    padding: 12,
-    borderRadius: 12,
-    backgroundColor: "#F3F4F6",
-    borderWidth: 1,
-    borderColor: BRAND.border,
-  },
-
-  devSnapshotTitle: {
-    fontWeight: "900",
-    fontSize: 15,
-    color: BRAND.text,
-  },
-
-  devSnapshotSub: {
-    marginTop: 6,
-    color: BRAND.muted,
-  },
-
-  mono: {
-    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
-    fontSize: 12,
-    lineHeight: 16,
-    color: BRAND.text,
-  },
-
-  monoSmall: {
-    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
-    fontSize: 11,
-    lineHeight: 15,
-    color: BRAND.text,
+  legalDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 999,
+    backgroundColor: BRAND.muted,
+    opacity: 0.45,
   },
 });

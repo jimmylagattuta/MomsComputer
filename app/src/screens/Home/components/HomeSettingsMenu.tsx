@@ -43,7 +43,6 @@ type HomeSettingsMenuProps = {
   onOpenSubscription: () => void;
   onChangePassword: () => void;
   onLogout: () => void;
-  onOpenNotifications?: () => void;
 };
 
 export default function HomeSettingsMenu({
@@ -55,7 +54,6 @@ export default function HomeSettingsMenu({
   onOpenSubscription,
   onChangePassword,
   onLogout,
-  onOpenNotifications,
 }: HomeSettingsMenuProps) {
   const [externalLinkTarget, setExternalLinkTarget] =
     useState<ExternalLinkTarget | null>(null);
@@ -80,14 +78,6 @@ export default function HomeSettingsMenu({
       await Linking.openURL(urlToOpen);
     } catch (error) {
       console.log("Unable to open external link:", error);
-    }
-  };
-
-  const handleOpenNotifications = () => {
-    onClose();
-
-    if (onOpenNotifications) {
-      onOpenNotifications();
     }
   };
 
@@ -141,28 +131,6 @@ export default function HomeSettingsMenu({
                 <Text style={styles.dropdownItemText}>Subscription</Text>
                 <Text style={styles.dropdownItemSubtext}>
                   View plan privileges
-                </Text>
-              </View>
-            </Pressable>
-
-            <View style={styles.divider} />
-
-            <Pressable
-              onPress={handleOpenNotifications}
-              style={({ pressed }) => [
-                styles.dropdownItem,
-                pressed && styles.dropdownItemPressed,
-              ]}
-            >
-              <Ionicons
-                name="notifications-outline"
-                size={20}
-                color={BRAND.blue}
-              />
-              <View style={styles.textBlock}>
-                <Text style={styles.dropdownItemText}>Notifications</Text>
-                <Text style={styles.dropdownItemSubtext}>
-                  View in-app notifications
                 </Text>
               </View>
             </Pressable>

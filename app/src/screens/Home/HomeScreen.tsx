@@ -34,10 +34,8 @@ import HomeSettingsMenu from "./components/HomeSettingsMenu";
 /**
  * ✅ DEV TOGGLES
  * Turn SUBSCRIPTIONS_ENABLED ON when testing RevenueCat behavior.
- * Turn DEBUG_PAYWALL_BUTTON_ENABLED OFF when you want the debug button hidden.
  */
 const SUBSCRIPTIONS_ENABLED = true;
-const DEBUG_PAYWALL_BUTTON_ENABLED = true;
 
 const IS_ANDROID = Platform.OS === "android";
 
@@ -50,6 +48,10 @@ const BRAND = {
   blue: "#1E73E8",
   blueSoft: "#F3F7FF",
   blueBorder: "#D6E6FF",
+  gold: "#D89A15",
+  goldDark: "#8A5A00",
+  goldSoft: "#FFF7E3",
+  goldBorder: "#F5C96B",
 };
 
 const LOGO_URI =
@@ -277,7 +279,18 @@ function AnimatedHint() {
       l2Y.stopAnimation();
       l2Scale.stopAnimation();
     };
-  }, [iconRotate, iconScale, l1Opacity, l1Scale, l1Y, l2Opacity, l2Scale, l2Y, sheenOpacity, sheenX]);
+  }, [
+    iconRotate,
+    iconScale,
+    l1Opacity,
+    l1Scale,
+    l1Y,
+    l2Opacity,
+    l2Scale,
+    l2Y,
+    sheenOpacity,
+    sheenX,
+  ]);
 
   const rotateDeg = iconRotate.interpolate({
     inputRange: [-1, 0, 1],
@@ -298,7 +311,12 @@ function AnimatedHint() {
           ]}
         />
 
-        <Animated.View style={[styles.hintIcon, { transform: [{ scale: iconScale }, { rotate: rotateDeg }] }]}>
+        <Animated.View
+          style={[
+            styles.hintIcon,
+            { transform: [{ scale: iconScale }, { rotate: rotateDeg }] },
+          ]}
+        >
           <Ionicons name="sparkles" size={14} color={BRAND.blue} />
         </Animated.View>
 
@@ -336,6 +354,121 @@ function AnimatedHint() {
   );
 }
 
+function PremiumPerch() {
+  const glistenX = useRef(new Animated.Value(-42)).current;
+  const glistenOpacity = useRef(new Animated.Value(0)).current;
+  const pulse = useRef(new Animated.Value(1)).current;
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sequenceRef = useRef<Animated.CompositeAnimation | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const runGlisten = () => {
+      if (!mounted) return;
+
+      glistenX.setValue(-42);
+      glistenOpacity.setValue(0);
+      pulse.setValue(1);
+
+      sequenceRef.current?.stop();
+
+      sequenceRef.current = Animated.sequence([
+        Animated.parallel([
+          Animated.sequence([
+            Animated.timing(glistenOpacity, {
+              toValue: 0.9,
+              duration: 180,
+              easing: Easing.out(Easing.quad),
+              useNativeDriver: true,
+            }),
+            Animated.timing(glistenX, {
+              toValue: 118,
+              duration: 950,
+              easing: Easing.inOut(Easing.quad),
+              useNativeDriver: true,
+            }),
+            Animated.timing(glistenOpacity, {
+              toValue: 0,
+              duration: 220,
+              easing: Easing.in(Easing.quad),
+              useNativeDriver: true,
+            }),
+          ]),
+
+          Animated.sequence([
+            Animated.delay(250),
+            Animated.spring(pulse, {
+              toValue: 1.025,
+              friction: 8,
+              tension: 70,
+              useNativeDriver: true,
+            }),
+            Animated.spring(pulse, {
+              toValue: 1,
+              friction: 8,
+              tension: 70,
+              useNativeDriver: true,
+            }),
+          ]),
+        ]),
+      ]);
+
+      sequenceRef.current.start(() => {
+        if (!mounted) return;
+
+        timeoutRef.current = setTimeout(() => {
+          runGlisten();
+        }, 2200);
+      });
+    };
+
+    runGlisten();
+
+    return () => {
+      mounted = false;
+
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
+      }
+
+      sequenceRef.current?.stop();
+      sequenceRef.current = null;
+
+      glistenX.stopAnimation();
+      glistenOpacity.stopAnimation();
+      pulse.stopAnimation();
+    };
+  }, [glistenOpacity, glistenX, pulse]);
+
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={[
+        styles.premiumPerch,
+        {
+          transform: [{ scale: pulse }],
+        },
+      ]}
+    >
+      <View style={styles.premiumPerchInner}>
+        <Animated.View
+          style={[
+            styles.premiumGlisten,
+            {
+              opacity: glistenOpacity,
+              transform: [{ translateX: glistenX }, { rotate: "18deg" }],
+            },
+          ]}
+        />
+
+        <Text style={styles.premiumPerchText}>PREMIUM</Text>
+      </View>
+    </Animated.View>
+  );
+}
+
 export default function HomeScreen() {
   const router = useRouter();
 
@@ -355,7 +488,6 @@ export default function HomeScreen() {
   const isPro = sub?.isPro ?? false;
   const subLoading = sub?.loading ?? false;
 
-  const autoPaywallOpenedRef = useRef(false);
   const [rcReady, setRcReady] = useState(false);
 
   const [storedPro, setStoredPro] = useState<boolean | null>(null);
@@ -418,13 +550,6 @@ export default function HomeScreen() {
 
   useEffect(() => {
     if (!SUBSCRIPTIONS_ENABLED) return;
-    if (isPro) {
-      autoPaywallOpenedRef.current = false;
-    }
-  }, [isPro]);
-
-  useEffect(() => {
-    if (!SUBSCRIPTIONS_ENABLED) return;
     if (!user?.id) return;
     if (!rcReady) return;
     if (subLoading) return;
@@ -461,23 +586,6 @@ export default function HomeScreen() {
   }, [user?.id, rcReady, subLoading, isPro, storedPro, router]);
 
   useEffect(() => {
-    if (!SUBSCRIPTIONS_ENABLED) return;
-    if (!rcReady) return;
-    if (subLoading) return;
-    if (isLoggingOut) return;
-    if (isPro) return;
-
-    if (autoPaywallOpenedRef.current) return;
-    autoPaywallOpenedRef.current = true;
-
-    const t = setTimeout(() => {
-      router.push("/paywall");
-    }, Platform.OS === "ios" ? 350 : 250);
-
-    return () => clearTimeout(t);
-  }, [rcReady, isPro, subLoading, isLoggingOut, router]);
-
-  useEffect(() => {
     if (!currentUserId) {
       setPushSyncUserId(null);
       return;
@@ -486,7 +594,7 @@ export default function HomeScreen() {
     if (pushSyncUserId !== currentUserId) {
       setPushSyncUserId(null);
     }
-  }, [currentUserId]);
+  }, [currentUserId, pushSyncUserId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -568,15 +676,39 @@ export default function HomeScreen() {
     };
   }, []);
 
-  const handleOpenDebugPaywall = () => {
-    if (!DEBUG_PAYWALL_BUTTON_ENABLED) return;
-    if (isLoggingOut) return;
-    setSettingsOpen(false);
-
+  const openPaywall = (featureName: string) => {
     router.push({
       pathname: "/paywall",
-      params: { debug: "1" },
+      params: {
+        feature: featureName,
+      },
     });
+  };
+
+  const handlePremiumFeaturePress = (route: string, featureName: string) => {
+    if (isLoggingOut) return;
+
+    setSettingsOpen(false);
+
+    if (!SUBSCRIPTIONS_ENABLED) {
+      router.push(route as any);
+      return;
+    }
+
+    if (!rcReady || subLoading) {
+      Alert.alert(
+        "Checking subscription",
+        "Give us one second to confirm your subscription status."
+      );
+      return;
+    }
+
+    if (isPro) {
+      router.push(route as any);
+      return;
+    }
+
+    openPaywall(featureName);
   };
 
   const handleOpenProfile = () => {
@@ -629,7 +761,6 @@ export default function HomeScreen() {
             router.replace("/(auth)/sign-in");
           } finally {
             setIsLoggingOut(false);
-            autoPaywallOpenedRef.current = false;
             setRcReady(false);
             setStoredPro(null);
             storedProLoadedRef.current = false;
@@ -641,9 +772,12 @@ export default function HomeScreen() {
     ]);
   };
 
+  const handleEmailTextMom = () => {
+    handlePremiumFeaturePress("/(app)/text-mom", "text");
+  };
+
   const handleCallMom = () => {
-    setSettingsOpen(false);
-    router.push("/(app)/call-mom");
+    handlePremiumFeaturePress("/(app)/call-mom", "call");
   };
 
   const bigBtnTextStyle = useMemo(
@@ -659,24 +793,6 @@ export default function HomeScreen() {
     <SafeAreaView style={styles.page} edges={["top", "left", "right"]}>
       <View style={[styles.screen, { paddingTop: 8, paddingBottom: 10 }]}>
         <View style={styles.topBar}>
-          {DEBUG_PAYWALL_BUTTON_ENABLED ? (
-            <Pressable
-              onPress={handleOpenDebugPaywall}
-              disabled={isLoggingOut}
-              hitSlop={12}
-              style={({ pressed }) => [
-                styles.debugChip,
-                pressed && !isLoggingOut && styles.debugChipPressed,
-                isLoggingOut && { opacity: 0.6 },
-              ]}
-            >
-              <Ionicons name="bug" size={18} color={BRAND.blue} />
-              <Text style={styles.debugChipText}>Debug</Text>
-            </Pressable>
-          ) : (
-            <View />
-          )}
-
           <View style={{ flex: 1 }} />
 
           <HomeSettingsMenu
@@ -730,24 +846,31 @@ export default function HomeScreen() {
                   >
                     ASK MOM
                   </Text>
+
                   <Text style={styles.btnSubText}>When something doesn’t feel right</Text>
                 </View>
               </Pressable>
 
               <Pressable
-                onPress={() => {
-                  setSettingsOpen(false);
-                  router.push("/(app)/text-mom");
-                }}
+                onPress={handleEmailTextMom}
                 disabled={isLoggingOut}
                 style={({ pressed }) => [
                   styles.bigBtn,
+                  styles.premiumBtn,
                   pressed && !isLoggingOut && styles.bigBtnPressed,
                   isLoggingOut && styles.disabledBtn,
                 ]}
               >
+                {!isPro && SUBSCRIPTIONS_ENABLED && <PremiumPerch />}
+
                 <View style={styles.iconPill}>
                   <Ionicons name="mail" size={34} color={BRAND.blue} />
+
+                  {!isPro && SUBSCRIPTIONS_ENABLED && (
+                    <View style={styles.lockDot}>
+                      <Ionicons name="lock-closed" size={12} color="#FFFFFF" />
+                    </View>
+                  )}
 
                   {textMomUnreadCount > 0 && (
                     <View style={styles.textMomBadge}>
@@ -768,6 +891,7 @@ export default function HomeScreen() {
                   >
                     EMAIL / TEXT MOM
                   </Text>
+
                   <Text style={styles.btnSubText}>For non-urgent questions</Text>
                 </View>
               </Pressable>
@@ -777,12 +901,21 @@ export default function HomeScreen() {
                 disabled={isLoggingOut}
                 style={({ pressed }) => [
                   styles.bigBtn,
+                  styles.premiumBtn,
                   pressed && !isLoggingOut && styles.bigBtnPressed,
                   isLoggingOut && styles.disabledBtn,
                 ]}
               >
+                {!isPro && SUBSCRIPTIONS_ENABLED && <PremiumPerch />}
+
                 <View style={styles.iconPill}>
                   <Ionicons name="call" size={34} color={BRAND.blue} />
+
+                  {!isPro && SUBSCRIPTIONS_ENABLED && (
+                    <View style={styles.lockDot}>
+                      <Ionicons name="lock-closed" size={12} color="#FFFFFF" />
+                    </View>
+                  )}
                 </View>
 
                 <View style={styles.textWrap}>
@@ -795,6 +928,7 @@ export default function HomeScreen() {
                   >
                     CALL MOM
                   </Text>
+
                   <Text style={styles.btnSubText}>When you need to talk to a real person</Text>
                 </View>
               </Pressable>
@@ -821,6 +955,7 @@ export default function HomeScreen() {
           pointerEvents="none"
         >
           <Ionicons name="shield-checkmark" size={22} color={BRAND.blue} />
+
           <Text style={styles.footerText}>
             Mom&apos;s Scam Helpline{"\n"}Since 2<Text style={styles.footerZero}>0</Text>13
           </Text>
@@ -863,30 +998,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingTop: IS_ANDROID ? 0 : 2,
     paddingBottom: IS_ANDROID ? 4 : 6,
-  },
-
-  debugChip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingVertical: IS_ANDROID ? 6 : 8,
-    paddingHorizontal: 12,
-    borderRadius: 999,
-    backgroundColor: BRAND.blueSoft,
-    borderWidth: 1,
-    borderColor: BRAND.blueBorder,
-  },
-
-  debugChipPressed: {
-    opacity: 0.85,
-    transform: [{ scale: 0.99 }],
-  },
-
-  debugChipText: {
-    color: BRAND.blue,
-    fontFamily: FONT.medium,
-    fontSize: IS_ANDROID ? 13 : 14,
-    letterSpacing: 0.35,
   },
 
   main: { flex: 1, justifyContent: "flex-start" },
@@ -993,6 +1104,49 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
 
+  premiumBtn: {
+    position: "relative",
+    overflow: "visible",
+  },
+
+  premiumPerch: {
+    position: "absolute",
+    top: -10,
+    right: 8,
+    zIndex: 30,
+  },
+
+  premiumPerchInner: {
+    position: "relative",
+    overflow: "hidden",
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    backgroundColor: BRAND.goldSoft,
+    borderWidth: 1,
+    borderColor: BRAND.goldBorder,
+    shadowColor: BRAND.gold,
+    shadowOpacity: 0.24,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 5,
+  },
+
+  premiumGlisten: {
+    position: "absolute",
+    top: -12,
+    bottom: -12,
+    width: 24,
+    backgroundColor: "#FFFFFF",
+  },
+
+  premiumPerchText: {
+    color: BRAND.goldDark,
+    fontFamily: FONT.medium,
+    fontSize: 10,
+    letterSpacing: 1.1,
+  },
+
   bigBtnPressed: { transform: [{ scale: 0.99 }], opacity: 0.98 },
 
   disabledBtn: { opacity: 0.55 },
@@ -1007,6 +1161,25 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: BRAND.blueBorder,
     position: "relative",
+  },
+
+  lockDot: {
+    position: "absolute",
+    top: -10,
+    right: -10,
+    width: 28,
+    height: 28,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: BRAND.gold,
+    borderWidth: 2,
+    borderColor: "#FFFFFF",
+    shadowColor: BRAND.gold,
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 4,
   },
 
   textWrap: {
@@ -1030,6 +1203,7 @@ const styles = StyleSheet.create({
     fontFamily: FONT.regular,
     fontSize: IS_ANDROID ? 13 : 14,
     letterSpacing: 0.2,
+    flexShrink: 1,
   },
 
   footer: {
@@ -1101,6 +1275,7 @@ const styles = StyleSheet.create({
     textAlign: "center",
     lineHeight: IS_ANDROID ? 17 : 18,
   },
+
   textMomBadge: {
     position: "absolute",
     top: -7,

@@ -11,6 +11,7 @@ import {
   AppState,
   FlatList,
   Image,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -267,6 +268,11 @@ export default function TextMomAdminScreen() {
   const [pickedImages, setPickedImages] = useState<UiImage[]>([]);
   const [previewUri, setPreviewUri] = useState<string | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+
+  const composerBottomPadding = keyboardVisible
+    ? 0
+    : Math.max(insets.bottom, Platform.OS === "ios" ? 16 : 12);
 
   useEffect(() => {
     newUserNoticeRef.current = newUserNotice;
@@ -287,8 +293,25 @@ export default function TextMomAdminScreen() {
     [isNarrow]
   );
 
+  const messagesListStyle = useMemo(
+    () => [
+      styles.messagesList,
+      {
+        paddingBottom: keyboardVisible ? 96 : 20,
+      },
+    ],
+    [keyboardVisible]
+  );
+
   const sendDisabled = sending || (!draft.trim() && pickedImages.length === 0);
   const showingThread = !!selectedThread;
+
+  useEffect(() => {
+    if (!showingThread) {
+      Keyboard.dismiss();
+      setKeyboardVisible(false);
+    }
+  }, [showingThread]);
 
   const clearScrollTimers = useCallback(() => {
     scrollTimersRef.current.forEach((timer) => clearTimeout(timer));
@@ -311,6 +334,28 @@ export default function TextMomAdminScreen() {
     },
     [clearScrollTimers]
   );
+
+  useEffect(() => {
+    const showEvent =
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent =
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+
+    const showSub = Keyboard.addListener(showEvent, () => {
+      setKeyboardVisible(true);
+      scrollToBottom(true);
+    });
+
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+      setKeyboardVisible(false);
+      scrollToBottom(false);
+    });
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, [scrollToBottom]);
 
   const openPreview = useCallback((uri: string) => {
     setPreviewUri(uri);
@@ -628,18 +673,6 @@ export default function TextMomAdminScreen() {
     [loadSelectedThread]
   );
 
-  const refreshAdminSafely = useCallback(async () => {
-    try {
-      await loadThreads("silent");
-
-      if (selectedThreadIdRef.current) {
-        await loadSelectedThread(selectedThreadIdRef.current, { silent: true });
-      }
-    } catch (error) {
-      console.warn("Admin fallback refresh failed", error);
-    }
-  }, [loadThreads, loadSelectedThread]);
-
   const subscribeAdminInbox = useCallback(async () => {
     if (inboxSubscriptionRef.current) return;
 
@@ -810,6 +843,9 @@ export default function TextMomAdminScreen() {
   }, [deepLinkThreadId, handleSelectThread, loading]);
 
   const handleBackToInbox = useCallback(() => {
+    Keyboard.dismiss();
+    setKeyboardVisible(false);
+
     cleanupSelectedThreadSubscription();
 
     if (socketRefreshTimerRef.current) {
@@ -1185,16 +1221,17 @@ export default function TextMomAdminScreen() {
   return (
     <SafeAreaView style={styles.page} edges={["top", "left", "right"]}>
       <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        keyboardVerticalOffset={Platform.OS === "ios" ? 8 : 0}
+        style={styles.keyboardAvoider}
+        enabled={Platform.OS === "ios"}
+        behavior="padding"
+        keyboardVerticalOffset={0}
       >
         <View
           style={[
             styles.screen,
             {
               paddingTop: 12,
-              paddingBottom: 10,
+              paddingBottom: 0,
               paddingHorizontal: H_PADDING,
             },
           ]}
@@ -1438,9 +1475,10 @@ export default function TextMomAdminScreen() {
                         data={displayThreadMessages}
                         keyExtractor={(item) => `msg-${item.id}`}
                         renderItem={renderMessage}
-                        contentContainerStyle={styles.messagesList}
+                        contentContainerStyle={messagesListStyle}
                         showsVerticalScrollIndicator={false}
                         keyboardShouldPersistTaps="handled"
+                        keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
                         style={{ flex: 1 }}
                         onContentSizeChange={() => {
                           if (displayThreadMessages.length > 0) {
@@ -1500,7 +1538,14 @@ export default function TextMomAdminScreen() {
                   )}
 
                   {!threadLoading && (
-                    <View style={styles.composerOuter}>
+                    <View
+                      style={[
+                        styles.composerOuter,
+                        {
+                          paddingBottom: composerBottomPadding,
+                        },
+                      ]}
+                    >
                       <View style={styles.composerWrap}>
                         <Pressable
                           onPress={pickImages}
@@ -1519,11 +1564,16 @@ export default function TextMomAdminScreen() {
                         <TextInput
                           value={draft}
                           onChangeText={setDraft}
+                          onFocus={() => scrollToBottom(true)}
                           placeholder="Reply as support..."
                           placeholderTextColor={BRAND.mutedSoft}
                           multiline
                           style={styles.input}
                           textAlignVertical="top"
+                          autoCorrect={true}
+                          spellCheck={true}
+                          autoCapitalize="sentences"
+                          keyboardType="default"
                         />
 
                         <Pressable
@@ -1557,7 +1607,12 @@ export default function TextMomAdminScreen() {
 const styles = StyleSheet.create({
   page: {
     flex: 1,
-    backgroundColor: BRAND.pageBg,
+    backgroundColor: BRAND.screenBg,
+  },
+
+  keyboardAvoider: {
+    flex: 1,
+    backgroundColor: BRAND.screenBg,
   },
 
   screen: {
@@ -1987,7 +2042,6 @@ const styles = StyleSheet.create({
 
   messagesList: {
     paddingTop: 8,
-    paddingBottom: 16,
     flexGrow: 1,
   },
 
@@ -2184,7 +2238,6 @@ const styles = StyleSheet.create({
   },
 
   composerOuter: {
-    paddingBottom: Platform.OS === "ios" ? 16 : 12,
     paddingTop: 2,
     backgroundColor: BRAND.screenBg,
   },
