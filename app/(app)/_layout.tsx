@@ -6,6 +6,7 @@ import { registerForPushNotificationsAsync } from "../src/services/notifications
 import {
   clearTextMomUnreadCount,
   incrementTextMomUnreadCount,
+  setTextMomUnreadCount,
 } from "../src/services/notifications/textMomUnreadBadge";
 
 function getNotificationData(
@@ -45,6 +46,36 @@ function buildNotificationDedupeKey(data: Record<string, any>) {
       : "none";
 
   return `${type}:${threadId}:${messageId}`;
+}
+
+function safeBadgeCount(value: unknown) {
+  const parsed = Number(value);
+
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return null;
+  }
+
+  return Math.floor(parsed);
+}
+
+async function applyNotificationBadgeCount(data: Record<string, any> | null) {
+  if (!data) return null;
+
+  const badgeCount =
+    safeBadgeCount(data.badge_count) ??
+    safeBadgeCount(data.badge) ??
+    safeBadgeCount(data.text_mom_unread_count) ??
+    safeBadgeCount(data.unread_count);
+
+  if (badgeCount === null) {
+    return null;
+  }
+
+  console.log("[Notifications] applying badge count from payload:", badgeCount);
+
+  await setTextMomUnreadCount(badgeCount);
+
+  return badgeCount;
 }
 
 export default function AppLayout() {
@@ -92,7 +123,11 @@ export default function AppLayout() {
         return;
       }
 
-      await incrementTextMomUnreadCount(1);
+      const appliedBadgeCount = await applyNotificationBadgeCount(data);
+
+      if (appliedBadgeCount === null) {
+        await incrementTextMomUnreadCount(1);
+      }
     };
 
     const sub = Notifications.addNotificationReceivedListener((notification) => {

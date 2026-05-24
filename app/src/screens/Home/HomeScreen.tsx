@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import * as Application from "expo-application";
 import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import * as SecureStore from "expo-secure-store";
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
@@ -25,6 +25,7 @@ import { postJson } from "../../services/api/client";
 import { registerForPushNotificationsAsync } from "../../services/notifications";
 import {
   getTextMomUnreadCount,
+  refreshTextMomUnreadCountFromServer,
   subscribeToTextMomUnreadCount,
 } from "../../services/notifications/textMomUnreadBadge";
 import { rcIdentifyUser, rcLogoutUser } from "../../subscriptions/rcClient";
@@ -33,9 +34,20 @@ import HomeSettingsMenu from "./components/HomeSettingsMenu";
 
 /**
  * ✅ DEV TOGGLES
- * Turn SUBSCRIPTIONS_ENABLED ON when testing RevenueCat behavior.
+ *
+ * SUBSCRIPTIONS_ENABLED:
+ * - true = RevenueCat/paywall logic is active
+ * - false = subscription system is ignored completely
+ *
+ * DEV_PAYWALL_BYPASS:
+ * - true = premium buttons open without paying
+ * - false = normal paywall behavior
+ *
+ * Before TestFlight/App Store/real subscription testing:
+ * set DEV_PAYWALL_BYPASS to false.
  */
 const SUBSCRIPTIONS_ENABLED = true;
+const DEV_PAYWALL_BYPASS = false;
 
 const IS_ANDROID = Platform.OS === "android";
 
@@ -249,7 +261,7 @@ function AnimatedHint() {
       ]);
 
       sequenceRef.current = seq;
-      seq.start(() => { });
+      seq.start(() => {});
     };
 
     if (Platform.OS === "ios") {
@@ -474,7 +486,14 @@ export default function HomeScreen() {
 
   const auth = useAuth() as any;
   const signOut = auth?.signOut as (() => Promise<void>) | undefined;
-  const user = auth?.user as { id?: string | number } | undefined;
+  const user = auth?.user as
+    | {
+        id?: string | number;
+        role?: string;
+        admin?: boolean;
+        is_admin?: boolean;
+      }
+    | undefined;
 
   const insets = useSafeAreaInsets();
   const [isLoggingOut, setIsLoggingOut] = useState(false);
@@ -495,10 +514,56 @@ export default function HomeScreen() {
 
   const currentUserId = user?.id != null ? String(user.id) : null;
 
+  const isAdmin =
+    user?.role === "admin" ||
+    user?.role === "super_admin" ||
+    user?.admin === true ||
+    user?.is_admin === true;
+
+  const hasPremiumAccess = isAdmin || isPro || DEV_PAYWALL_BYPASS;
+
+  const shouldShowPremiumLocks = SUBSCRIPTIONS_ENABLED && !hasPremiumAccess;
+  const shouldShowSubscriptionChecking =
+    SUBSCRIPTIONS_ENABLED &&
+    !DEV_PAYWALL_BYPASS &&
+    !isAdmin &&
+    (subLoading || !rcReady);
+
   const [textMomUnreadCount, setTextMomUnreadCount] = useState(0);
 
   useEffect(() => {
+    console.log("🏠 [HomeBadge] mounted");
+    console.log("🏠 [HomeBadge] initial user:", user);
+    console.log("🏠 [HomeBadge] initial currentUserId:", currentUserId);
+    console.log("🏠 [HomeBadge] initial isLoggingOut:", isLoggingOut);
+
+    return () => {
+      console.log("🏠 [HomeBadge] unmounted");
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    console.log("🏠 [HomeBadge] auth/user state changed:", {
+      currentUserId,
+      userId: user?.id,
+      role: user?.role,
+      isAdmin,
+      isLoggingOut,
+    });
+  }, [currentUserId, user?.id, user?.role, isAdmin, isLoggingOut]);
+
+  useEffect(() => {
+    console.log("🏠 [HomeBadge] textMomUnreadCount changed:", textMomUnreadCount);
+  }, [textMomUnreadCount]);
+
+  useEffect(() => {
     if (!SUBSCRIPTIONS_ENABLED) return;
+
+    if (DEV_PAYWALL_BYPASS) {
+      setRcReady(true);
+      return;
+    }
 
     let cancelled = false;
 
@@ -507,6 +572,11 @@ export default function HomeScreen() {
         setRcReady(false);
 
         if (!user?.id) {
+          if (!cancelled) setRcReady(true);
+          return;
+        }
+
+        if (isAdmin) {
           if (!cancelled) setRcReady(true);
           return;
         }
@@ -524,11 +594,23 @@ export default function HomeScreen() {
     };
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id]);
+  }, [user?.id, isAdmin]);
 
   useEffect(() => {
     if (!SUBSCRIPTIONS_ENABLED) return;
+
+    if (DEV_PAYWALL_BYPASS) {
+      storedProLoadedRef.current = true;
+      setStoredPro(true);
+      return;
+    }
+
     if (!user?.id) return;
+    if (isAdmin) {
+      storedProLoadedRef.current = true;
+      setStoredPro(true);
+      return;
+    }
 
     let cancelled = false;
 
@@ -546,11 +628,13 @@ export default function HomeScreen() {
     return () => {
       cancelled = true;
     };
-  }, [user?.id]);
+  }, [user?.id, isAdmin]);
 
   useEffect(() => {
     if (!SUBSCRIPTIONS_ENABLED) return;
+    if (DEV_PAYWALL_BYPASS) return;
     if (!user?.id) return;
+    if (isAdmin) return;
     if (!rcReady) return;
     if (subLoading) return;
     if (!storedProLoadedRef.current) return;
@@ -570,7 +654,7 @@ export default function HomeScreen() {
           // @ts-ignore
           router.back();
         }
-      } catch { }
+      } catch {}
 
       Alert.alert("✅ Subscription active!");
 
@@ -583,7 +667,7 @@ export default function HomeScreen() {
       writeStoredPro(userId, isPro);
       setStoredPro(isPro);
     }
-  }, [user?.id, rcReady, subLoading, isPro, storedPro, router]);
+  }, [user?.id, isAdmin, rcReady, subLoading, isPro, storedPro, router]);
 
   useEffect(() => {
     if (!currentUserId) {
@@ -662,19 +746,73 @@ export default function HomeScreen() {
   useEffect(() => {
     let mounted = true;
 
+    console.log("🏠 [HomeBadge] local badge subscription effect started");
+
     getTextMomUnreadCount().then((count) => {
-      if (mounted) setTextMomUnreadCount(count);
+      console.log("🏠 [HomeBadge] getTextMomUnreadCount resolved:", count);
+
+      if (mounted) {
+        console.log("🏠 [HomeBadge] setting local stored count into state:", count);
+        setTextMomUnreadCount(count);
+      } else {
+        console.log("🏠 [HomeBadge] skipped stored count because unmounted:", count);
+      }
     });
 
     const unsubscribe = subscribeToTextMomUnreadCount((count) => {
+      console.log("🏠 [HomeBadge] subscription listener received count:", count);
       setTextMomUnreadCount(count);
     });
 
     return () => {
+      console.log("🏠 [HomeBadge] local badge subscription effect cleanup");
       mounted = false;
       unsubscribe();
     };
   }, []);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      let active = true;
+
+      console.log("🏠 [HomeBadge] useFocusEffect fired");
+      console.log("🏠 [HomeBadge] focus currentUserId:", currentUserId);
+      console.log("🏠 [HomeBadge] focus isLoggingOut:", isLoggingOut);
+
+      if (!currentUserId || isLoggingOut) {
+        console.log("⚠️ [HomeBadge] focus skipped refresh; clearing badge", {
+          currentUserId,
+          isLoggingOut,
+        });
+
+        setTextMomUnreadCount(0);
+
+        return () => {
+          console.log("🏠 [HomeBadge] focus cleanup after skipped refresh");
+          active = false;
+        };
+      }
+
+      console.log("🏠 [HomeBadge] calling refreshTextMomUnreadCountFromServer");
+
+      refreshTextMomUnreadCountFromServer().then((count) => {
+        console.log("🏠 [HomeBadge] refresh promise resolved count:", count);
+        console.log("🏠 [HomeBadge] focus still active:", active);
+
+        if (active) {
+          console.log("🏠 [HomeBadge] setting refreshed count into state:", count);
+          setTextMomUnreadCount(count);
+        } else {
+          console.log("⚠️ [HomeBadge] skipped refreshed count because focus inactive:", count);
+        }
+      });
+
+      return () => {
+        console.log("🏠 [HomeBadge] useFocusEffect cleanup");
+        active = false;
+      };
+    }, [currentUserId, isLoggingOut])
+  );
 
   const openPaywall = (featureName: string) => {
     router.push({
@@ -690,7 +828,12 @@ export default function HomeScreen() {
 
     setSettingsOpen(false);
 
-    if (!SUBSCRIPTIONS_ENABLED) {
+    if (!SUBSCRIPTIONS_ENABLED || DEV_PAYWALL_BYPASS) {
+      router.push(route as any);
+      return;
+    }
+
+    if (isAdmin) {
       router.push(route as any);
       return;
     }
@@ -747,10 +890,10 @@ export default function HomeScreen() {
             if (token) {
               try {
                 await postJson("/v1/auth/logout", {}, token);
-              } catch { }
+              } catch {}
             }
 
-            if (SUBSCRIPTIONS_ENABLED) {
+            if (SUBSCRIPTIONS_ENABLED && !DEV_PAYWALL_BYPASS) {
               await rcLogoutUser();
             }
 
@@ -788,6 +931,13 @@ export default function HomeScreen() {
   const FOOTER_MIN_HEIGHT = 64;
   const footerPaddingBottom = Math.max(insets.bottom, 10) + 10;
   const footerTotalHeight = FOOTER_MIN_HEIGHT + footerPaddingBottom;
+
+  console.log("🏠 [HomeBadge] render:", {
+    currentUserId,
+    isLoggingOut,
+    textMomUnreadCount,
+    willShowBadge: textMomUnreadCount > 0,
+  });
 
   return (
     <SafeAreaView style={styles.page} edges={["top", "left", "right"]}>
@@ -861,12 +1011,12 @@ export default function HomeScreen() {
                   isLoggingOut && styles.disabledBtn,
                 ]}
               >
-                {!isPro && SUBSCRIPTIONS_ENABLED && <PremiumPerch />}
+                {shouldShowPremiumLocks && <PremiumPerch />}
 
                 <View style={styles.iconPill}>
                   <Ionicons name="mail" size={34} color={BRAND.blue} />
 
-                  {!isPro && SUBSCRIPTIONS_ENABLED && (
+                  {shouldShowPremiumLocks && (
                     <View style={styles.lockDot}>
                       <Ionicons name="lock-closed" size={12} color="#FFFFFF" />
                     </View>
@@ -906,12 +1056,12 @@ export default function HomeScreen() {
                   isLoggingOut && styles.disabledBtn,
                 ]}
               >
-                {!isPro && SUBSCRIPTIONS_ENABLED && <PremiumPerch />}
+                {shouldShowPremiumLocks && <PremiumPerch />}
 
                 <View style={styles.iconPill}>
                   <Ionicons name="call" size={34} color={BRAND.blue} />
 
-                  {!isPro && SUBSCRIPTIONS_ENABLED && (
+                  {shouldShowPremiumLocks && (
                     <View style={styles.lockDot}>
                       <Ionicons name="lock-closed" size={12} color="#FFFFFF" />
                     </View>
@@ -935,7 +1085,7 @@ export default function HomeScreen() {
             </View>
           </View>
 
-          {SUBSCRIPTIONS_ENABLED && (subLoading || !rcReady) && (
+          {shouldShowSubscriptionChecking && (
             <View style={{ marginTop: 10 }}>
               <Text style={{ color: BRAND.muted, fontFamily: FONT.regular, fontSize: 12 }}>
                 Checking subscription…

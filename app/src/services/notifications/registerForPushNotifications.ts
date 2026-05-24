@@ -8,7 +8,11 @@ import { Platform } from "react-native";
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldPlaySound: true,
-    shouldSetBadge: false,
+
+    // ✅ Lets foreground notifications apply badge updates from payloads.
+    // Closed/background app icon badges still come from Rails sending `badge`.
+    shouldSetBadge: true,
+
     shouldShowBanner: true,
     shouldShowList: true,
   }),
@@ -20,11 +24,14 @@ export async function registerForPushNotificationsAsync() {
     return null;
   }
 
-  // On Android 13+, create the channel before requesting/getting push token
+  // On Android 13+, create the channel before requesting/getting push token.
+  // IMPORTANT: Android notification channels are sticky.
+  // If the channel already existed without showBadge, uninstall/reinstall the app to recreate it.
   if (Platform.OS === "android") {
     await Notifications.setNotificationChannelAsync("default", {
       name: "default",
       importance: Notifications.AndroidImportance.MAX,
+      showBadge: true,
     });
   }
 
@@ -32,7 +39,14 @@ export async function registerForPushNotificationsAsync() {
   let finalStatus = existingStatus;
 
   if (existingStatus !== "granted") {
-    const { status } = await Notifications.requestPermissionsAsync();
+    const { status } = await Notifications.requestPermissionsAsync({
+      ios: {
+        allowAlert: true,
+        allowBadge: true,
+        allowSound: true,
+      },
+    });
+
     finalStatus = status;
   }
 
