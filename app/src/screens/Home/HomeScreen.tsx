@@ -47,7 +47,7 @@ import HomeSettingsMenu from "./components/HomeSettingsMenu";
  * set DEV_PAYWALL_BYPASS to false.
  */
 const SUBSCRIPTIONS_ENABLED = true;
-const DEV_PAYWALL_BYPASS = false;
+const DEV_PAYWALL_BYPASS = true;
 
 const IS_ANDROID = Platform.OS === "android";
 

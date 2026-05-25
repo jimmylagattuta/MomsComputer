@@ -51,26 +51,20 @@ function roleFromSenderType(senderType: string) {
   return senderType === "user" ? "user" : "assistant";
 }
 
-// ✅ Warm "thinking" options (randomly picked per send)
 const THINKING_OPTIONS = ["One sec, I’m looking into it"];
 
 function pickThinkingText() {
   return THINKING_OPTIONS[Math.floor(Math.random() * THINKING_OPTIONS.length)];
 }
 
-// ✅ Pre-chat opener (single phrase)
 const PRECHAT_OPENER =
   "I’m here with you. Take your time and tell me what you’re seeing.";
 
-// ✅ Max image attachments
 const MAX_IMAGES = 5;
 
-// ✅ Convert HEIC/HEIF/etc to JPEG so backend + OpenAI are happy
 async function ensureJpegUri(uri: string) {
   const lower = (uri || "").toLowerCase();
 
-  // If it's already a "normal" extension, keep it.
-  // (Some pickers return content:// without an extension — we'll convert those too.)
   const looksLikeJpegOrPng =
     lower.endsWith(".jpg") ||
     lower.endsWith(".jpeg") ||
@@ -87,7 +81,6 @@ async function ensureJpegUri(uri: string) {
 
   if (looksLikeJpegOrPng && !looksLikeHeic) return uri;
 
-  // Convert to JPEG (no resize, just re-encode)
   const result = await ImageManipulator.manipulateAsync(uri, [], {
     compress: 0.9,
     format: ImageManipulator.SaveFormat.JPEG,
@@ -103,13 +96,13 @@ export default function AskMomScreen() {
   const scrollRef = useRef<ScrollView | null>(null);
   const thinkingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  // ✅ Pre-chat seeding guard (prevents duplicate opener)
   const prechatSeededRef = useRef(false);
 
-  /** ✅ History drawer state */
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  // ✅ Android first-keyboard-open layout helper.
+  // This prevents repeated first-open corrections while staying on the same chat.
+  const firstAndroidKeyboardFixDoneRef = useRef(false);
 
-  /** ✅ Preloaded conversations for drawer */
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
 
   const [input, setInput] = useState("");
@@ -120,22 +113,20 @@ export default function AskMomScreen() {
     undefined
   );
 
-  // ✅ local-only selected images for the composer (UI + preview strip)
-  // Each selected image starts with loading: true so tiles appear instantly.
   const [composerImages, setComposerImages] = useState<ComposerImage[]>([]);
 
   const hasConversation = messages.length > 0;
 
-  // ✅ Keyboard driven animation
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   const kbHeight = useRef(new Animated.Value(0)).current;
 
-  // ✅ IMPORTANT: numeric lift for padding calculations
   const [keyboardLift, setKeyboardLift] = useState(0);
-
-  // ✅ Measure the FULL bottom stack (composer + optional home button)
-  // so ScrollView padding is snug and never blocks the last message.
   const [bottomStackHeight, setBottomStackHeight] = useState(0);
+
+  // ✅ Idea 3B:
+  // This state triggers recalculation/timed scroll effects WITHOUT remounting
+  // the ChatComposer/TextInput. Do NOT use this as a key on Animated.View.
+  const [androidLayoutTick, setAndroidLayoutTick] = useState(0);
 
   const animateKb = (to: number, duration = 220) => {
     Animated.timing(kbHeight, {
@@ -152,7 +143,6 @@ export default function AskMomScreen() {
     });
   };
 
-  // ✅ Preload conversation list on screen mount (non-blocking)
   useEffect(() => {
     let mounted = true;
 
@@ -173,11 +163,6 @@ export default function AskMomScreen() {
     };
   }, []);
 
-  // ✅ Keyboard listeners:
-  // - iOS uses WillShow/WillHide for perfect sync with animation
-  // - Android uses DidShow/DidHide (more reliable)
-  // iOS gets translated by the visible keyboard height.
-  // Android is usually already resized by the system, so don't manually lift it.
   useEffect(() => {
     const showEvent =
       Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
@@ -189,8 +174,8 @@ export default function AskMomScreen() {
 
       const iosLift = Math.max(0, rawH - insets.bottom);
 
-      // ✅ Android usually already resizes the layout,
-      // so keep manual lift at 0 to avoid sending the composer too high.
+      // ✅ Keep Android in native resize mode.
+      // The fix here is timing/layout recalculation, not manual lifting.
       const androidLift = 0;
 
       const lift = Platform.OS === "ios" ? iosLift : androidLift;
@@ -198,6 +183,30 @@ export default function AskMomScreen() {
       setKeyboardOpen(true);
       setKeyboardLift(lift);
       animateKb(lift, Platform.OS === "ios" ? 220 : 160);
+
+      if (Platform.OS === "android" && !firstAndroidKeyboardFixDoneRef.current) {
+        firstAndroidKeyboardFixDoneRef.current = true;
+
+        requestAnimationFrame(() => {
+          setAndroidLayoutTick((prev) => prev + 1);
+          scrollToBottom(false);
+        });
+
+        setTimeout(() => {
+          setAndroidLayoutTick((prev) => prev + 1);
+          scrollToBottom(false);
+        }, 80);
+
+        setTimeout(() => {
+          setAndroidLayoutTick((prev) => prev + 1);
+          scrollToBottom(false);
+        }, 180);
+
+        setTimeout(() => {
+          setAndroidLayoutTick((prev) => prev + 1);
+          scrollToBottom(false);
+        }, 320);
+      }
     });
 
     const hideSub = Keyboard.addListener(hideEvent as any, () => {
@@ -212,24 +221,23 @@ export default function AskMomScreen() {
     };
   }, [kbHeight, insets.bottom]);
 
-  /**
-   * ✅ When keyboard is open, the composer stack is translated upward on iOS.
-   * Android is typically already resized, so we do not add extra lift there.
-   */
   useEffect(() => {
     if (!keyboardOpen) return;
 
     scrollToBottom(false);
     const t1 = setTimeout(() => scrollToBottom(false), 50);
     const t2 = setTimeout(() => scrollToBottom(false), 140);
+    const t3 = setTimeout(() => scrollToBottom(false), 260);
+    const t4 = setTimeout(() => scrollToBottom(false), 420);
 
     return () => {
       clearTimeout(t1);
       clearTimeout(t2);
+      clearTimeout(t3);
+      clearTimeout(t4);
     };
-  }, [keyboardOpen, keyboardLift, bottomStackHeight]);
+  }, [keyboardOpen, keyboardLift, bottomStackHeight, androidLayoutTick]);
 
-  // ✅ Auto pre-chat opener (only once on a fresh thread)
   useEffect(() => {
     if (prechatSeededRef.current) return;
 
@@ -248,7 +256,6 @@ export default function AskMomScreen() {
     setMessages([openerMsg]);
   }, [messages.length, conversationId, loading]);
 
-  // 🔁 Animated "Thinking…" dots
   const startThinkingAnimation = (thinkingId: string, base: string) => {
     let dots = 0;
 
@@ -297,7 +304,7 @@ export default function AskMomScreen() {
           const hasText = (m?.content || "").trim().length > 0;
           const imgs = (m as any)?.images;
           const hasImages = Array.isArray(imgs) && imgs.length > 0;
-          return hasText || hasImages; // ✅ keep image-only messages
+          return hasText || hasImages;
         })
         .map((m) => {
           const imgs = Array.isArray((m as any).images) ? (m as any).images : [];
@@ -308,7 +315,6 @@ export default function AskMomScreen() {
           return {
             id: String(m.id),
             role: roleFromSenderType(String(m.sender_type || "")) as any,
-            // ✅ show placeholder text for image-only messages
             text: text.length ? text : hasImages ? "(image)" : "",
             pending: false,
             images: imgs.map((uri: string) => ({ uri })),
@@ -316,7 +322,7 @@ export default function AskMomScreen() {
         });
 
       setMessages(mapped);
-      setComposerImages([]); // ✅ reset local attachments on thread switch
+      setComposerImages([]);
       setInput("");
 
       setTimeout(() => scrollToBottom(false), 50);
@@ -331,14 +337,12 @@ export default function AskMomScreen() {
     }
   };
 
-  // ✅ Called by ChatComposer when a thumbnail finishes decoding.
   const handleImageLoaded = (uri: string) => {
     setComposerImages((prev) =>
       prev.map((im) => (im.uri === uri ? { ...im, loading: false } : im))
     );
   };
 
-  // ✅ shared helper so camera + library both merge images the same way
   const addImagesToComposer = async (inputUris: string[]) => {
     const convertedUris: string[] = [];
 
@@ -449,7 +453,6 @@ export default function AskMomScreen() {
     }
   };
 
-  // ✅ show options when photo button is tapped
   const handlePressAddImage = () => {
     const remaining = Math.max(0, MAX_IMAGES - composerImages.length);
     if (remaining <= 0) {
@@ -526,15 +529,15 @@ export default function AskMomScreen() {
         prev.map((m) =>
           m.id === thinkingId
             ? {
-              ...m,
-              text: assistantText,
-              pending: false,
-              show_contact_panel: !!res.show_contact_panel,
-              escalation_reason: res.escalation_reason || null,
-              contact_actions: res.contact_actions || null,
-              contact_draft: res.contact_draft || null,
-              contact_targets: res.contact_targets || null,
-            }
+                ...m,
+                text: assistantText,
+                pending: false,
+                show_contact_panel: !!res.show_contact_panel,
+                escalation_reason: res.escalation_reason || null,
+                contact_actions: res.contact_actions || null,
+                contact_draft: res.contact_draft || null,
+                contact_targets: res.contact_targets || null,
+              }
             : m
         )
       );
@@ -553,11 +556,11 @@ export default function AskMomScreen() {
         prev.map((m) =>
           m.id === thinkingId
             ? {
-              ...m,
-              text:
-                "I couldn’t reach the server right now. Please try again.\n\n(If this is urgent or involves money/codes, don’t proceed—tell me what it said.)",
-              pending: false,
-            }
+                ...m,
+                text:
+                  "I couldn’t reach the server right now. Please try again.\n\n(If this is urgent or involves money/codes, don’t proceed—tell me what it said.)",
+                pending: false,
+              }
             : m
         )
       );
@@ -569,6 +572,7 @@ export default function AskMomScreen() {
 
   const handleClear = () => {
     prechatSeededRef.current = false;
+    firstAndroidKeyboardFixDoneRef.current = false;
 
     stopThinkingAnimation();
     Keyboard.dismiss();
@@ -590,10 +594,11 @@ export default function AskMomScreen() {
 
   const showHomeFooterButton = !keyboardOpen;
 
-  // ✅ iOS needs extra keyboard lift padding because composer is translated upward.
-  // ✅ Android usually does not, because the system already resizes the screen.
   const scrollBottomPad =
-    bottomStackHeight + (Platform.OS === "ios" && keyboardOpen ? keyboardLift : 0) + 8;
+    bottomStackHeight +
+    (Platform.OS === "ios" && keyboardOpen ? keyboardLift : 0) +
+    8 +
+    androidLayoutTick * 0;
 
   return (
     <SafeAreaView style={styles.page}>
