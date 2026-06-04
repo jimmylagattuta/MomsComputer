@@ -37,6 +37,11 @@ type ExternalLinkTarget = {
 type HomeSettingsMenuProps = {
   open: boolean;
   disabled?: boolean;
+
+  // ✅ Current monthly call usage display
+  currentCallsThisMonth?: number | null;
+  monthlyCallLimit?: number | null;
+
   onToggle: () => void;
   onClose: () => void;
   onOpenProfile: () => void;
@@ -48,6 +53,8 @@ type HomeSettingsMenuProps = {
 export default function HomeSettingsMenu({
   open,
   disabled = false,
+  currentCallsThisMonth = null,
+  monthlyCallLimit = null,
   onToggle,
   onClose,
   onOpenProfile,
@@ -80,6 +87,34 @@ export default function HomeSettingsMenu({
       console.log("Unable to open external link:", error);
     }
   };
+
+  const hasCallUsageNumbers =
+    typeof currentCallsThisMonth === "number" &&
+    typeof monthlyCallLimit === "number";
+
+  const callsRemaining = hasCallUsageNumbers
+    ? Math.max(monthlyCallLimit - currentCallsThisMonth, 0)
+    : null;
+
+  const callsRemainingTitle =
+    typeof callsRemaining === "number"
+      ? `${callsRemaining} ${
+          callsRemaining === 1 ? "Call" : "Calls"
+        } Remaining This Month`
+      : "Monthly Calls";
+
+  const callsUsedSubtext = hasCallUsageNumbers
+    ? `${currentCallsThisMonth} of ${monthlyCallLimit} monthly calls used`
+    : "Monthly phone support usage";
+
+  console.log("📞 [HomeSettingsMenu] received call usage props:", {
+    currentCallsThisMonth,
+    monthlyCallLimit,
+    hasCallUsageNumbers,
+    callsRemaining,
+    callsRemainingTitle,
+    callsUsedSubtext,
+  });
 
   return (
     <View style={styles.settingsWrap}>
@@ -134,6 +169,20 @@ export default function HomeSettingsMenu({
                 </Text>
               </View>
             </Pressable>
+
+            <View style={styles.divider} />
+
+            <View style={styles.dropdownItem}>
+              <Ionicons name="call-outline" size={20} color={BRAND.blue} />
+              <View style={styles.textBlock}>
+                <Text style={styles.dropdownItemText}>
+                  {callsRemainingTitle}
+                </Text>
+                <Text style={styles.dropdownItemSubtext}>
+                  {callsUsedSubtext}
+                </Text>
+              </View>
+            </View>
 
             <View style={styles.divider} />
 

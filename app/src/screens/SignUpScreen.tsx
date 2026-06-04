@@ -173,6 +173,7 @@ export default function SignUpScreen() {
           clearInterval(id);
           return 0;
         }
+
         return prev - 1;
       });
     }, 1000);
@@ -192,12 +193,15 @@ export default function SignUpScreen() {
   const clearFieldErrorsOnEdit = (field: "name" | "email" | "phone" | "code" | "password") => {
     if (field === "name") setNameError(null);
     if (field === "email") setEmailError(null);
+
     if (field === "phone") {
       setPhoneError(null);
       setCodeError(null);
     }
+
     if (field === "code") setCodeError(null);
     if (field === "password") setPasswordError(null);
+
     setGeneralError(null);
   };
 
@@ -276,6 +280,7 @@ export default function SignUpScreen() {
 
   const onPrimaryLayout = (e: any) => {
     const w = e?.nativeEvent?.layout?.width ?? 0;
+
     if (w > 0 && w !== btnWidthRef.current) {
       btnWidthRef.current = w;
       setBtnWidth(w);
@@ -295,7 +300,9 @@ export default function SignUpScreen() {
 
   const fillTransform = useMemo(() => {
     const w = btnWidthRef.current || btnWidth || 0;
+
     if (!w) return [{ scaleX: fillAnim }] as any;
+
     return [{ translateX: -w / 2 }, { scaleX: fillAnim }, { translateX: w / 2 }] as any;
   }, [btnWidth, fillAnim]);
 
@@ -303,6 +310,7 @@ export default function SignUpScreen() {
     new Promise<void>((resolve) => {
       fillAnim.stopAnimation();
       fillAnim.setValue(0);
+
       Animated.timing(fillAnim, {
         toValue: 1,
         duration: 380,
@@ -314,6 +322,7 @@ export default function SignUpScreen() {
   const resetFillAnim = () =>
     new Promise<void>((resolve) => {
       fillAnim.stopAnimation();
+
       Animated.timing(fillAnim, {
         toValue: 0,
         duration: 220,
@@ -333,14 +342,20 @@ export default function SignUpScreen() {
     if (!em) return { field: "email", message: "Please enter your email." };
     if (!looksLikeEmail(em)) return { field: "email", message: "That email doesn’t look right." };
     if (!phoneDigits) return { field: "phone", message: "Please enter your phone number." };
-    if (phoneDigits.length !== 10) return { field: "phone", message: "Enter a valid 10-digit phone number." };
+
+    if (phoneDigits.length !== 10) {
+      return { field: "phone", message: "Enter a valid 10-digit phone number." };
+    }
+
     if (!phoneVerified || !verificationToken) {
       return { field: "phone", message: "Please verify your phone number first." };
     }
+
     if (!pw) return { field: "password", message: "Please create a password." };
     if (pw.length < 8) return { field: "password", message: "Password must be at least 8 characters." };
     if (!pc) return { field: "password", message: "Please re-type your password." };
     if (pw !== pc) return { field: "password", message: "Passwords do not match." };
+
     return null;
   };
 
@@ -376,6 +391,21 @@ export default function SignUpScreen() {
     } catch {
       Alert.alert("Unable to open link", url);
     }
+  };
+
+  const handleBack = () => {
+    if (isSigningUp) return;
+
+    Keyboard.dismiss();
+
+    try {
+      if ((router as any)?.canGoBack?.()) {
+        router.back();
+        return;
+      }
+    } catch {}
+
+    router.replace("/");
   };
 
   const handlePhoneChange = (value: string) => {
@@ -485,6 +515,7 @@ export default function SignUpScreen() {
       if (password && passwordConfirm) {
         setPwHint(password === passwordConfirm ? "match" : "mismatch");
       }
+
       return;
     }
 
@@ -492,8 +523,8 @@ export default function SignUpScreen() {
       setIsSigningUp(true);
       clearAllErrors();
       setInlineSuccess(null);
-      await afterNextPaint();
 
+      await afterNextPaint();
       await runFillAnim();
 
       const result = await completeSignUp({
@@ -558,6 +589,26 @@ export default function SignUpScreen() {
 
   return (
     <SafeAreaView style={styles.page}>
+      <Pressable
+        onPress={handleBack}
+        disabled={isSigningUp}
+        hitSlop={10}
+        style={({ pressed }) => [
+          styles.floatingBackButton,
+          {
+            top:
+              Platform.OS === "android"
+                ? Math.max(insets.top + 8, 18)
+                : Math.max(insets.top + 4, 14),
+          },
+          pressed && !isSigningUp ? styles.floatingBackButtonPressed : null,
+          isSigningUp ? styles.floatingBackButtonDisabled : null,
+        ]}
+      >
+        <Ionicons name="chevron-back" size={18} color={BRAND.blue} />
+        <Text style={styles.floatingBackButtonText}>BACK</Text>
+      </Pressable>
+
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
@@ -750,10 +801,10 @@ export default function SignUpScreen() {
                         {isSendingCode
                           ? "Sending..."
                           : codeSent
-                          ? cooldown > 0
-                            ? `Resend in ${formatCountdown(cooldown)}`
-                            : "Resend Code"
-                          : "Send Code"}
+                            ? cooldown > 0
+                              ? `Resend in ${formatCountdown(cooldown)}`
+                              : "Resend Code"
+                            : "Send Code"}
                       </Text>
                     </Pressable>
 
@@ -991,6 +1042,43 @@ export default function SignUpScreen() {
 const styles = StyleSheet.create({
   page: { flex: 1, backgroundColor: BRAND.pageBg },
 
+  floatingBackButton: {
+    position: "absolute",
+    left: H_PADDING,
+    zIndex: 100,
+    minHeight: 34,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 2,
+    backgroundColor: BRAND.blueSoft,
+    borderWidth: 1,
+    borderColor: BRAND.blueBorder,
+    shadowColor: "#000",
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 5,
+  },
+
+  floatingBackButtonPressed: {
+    transform: [{ scale: 0.98 }],
+    opacity: 0.9,
+  },
+
+  floatingBackButtonDisabled: {
+    opacity: 0.5,
+  },
+
+  floatingBackButtonText: {
+    color: BRAND.blue,
+    fontFamily: FONT.medium,
+    fontSize: 12,
+    letterSpacing: 0.8,
+  },
+
   logoBannerFullBleed: {
     width: "100%",
     backgroundColor: "#FFFFFF",
@@ -1010,10 +1098,15 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 0,
     borderTopRightRadius: 0,
     paddingHorizontal: H_PADDING,
-    marginTop: 0,
+    marginTop: -14,
   },
 
-  scrollContent: { flexGrow: 1, justifyContent: "center" },
+  scrollContent: {
+    flexGrow: 1,
+    justifyContent: "center",
+    paddingTop: 8,
+  },
+
   main: { width: "100%" },
 
   form: {
@@ -1024,6 +1117,7 @@ const styles = StyleSheet.create({
   },
 
   title: { fontSize: 26, fontFamily: FONT.semi, color: BRAND.text },
+
   subtitle: {
     color: BRAND.muted,
     marginTop: 4,
@@ -1032,6 +1126,7 @@ const styles = StyleSheet.create({
   },
 
   field: { marginTop: 12 },
+
   label: { fontSize: 13, fontFamily: FONT.medium, color: BRAND.text },
 
   helperText: {
@@ -1053,6 +1148,7 @@ const styles = StyleSheet.create({
     borderColor: "#FEE4E2",
     marginBottom: 10,
   },
+
   errorText: {
     flex: 1,
     color: BRAND.danger,
@@ -1072,6 +1168,7 @@ const styles = StyleSheet.create({
     borderColor: "#D1FADF",
     marginBottom: 10,
   },
+
   successText: {
     flex: 1,
     color: BRAND.ok,
@@ -1091,6 +1188,7 @@ const styles = StyleSheet.create({
     borderColor: "#FEE4E2",
     marginTop: 8,
   },
+
   fieldErrorText: {
     flex: 1,
     color: BRAND.danger,
@@ -1111,6 +1209,7 @@ const styles = StyleSheet.create({
     backgroundColor: BRAND.inputBg,
     marginTop: 8,
   },
+
   input: {
     flex: 1,
     fontSize: 16,
@@ -1138,15 +1237,18 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: 14,
   },
+
   smallBtnDisabled: {
     borderColor: BRAND.border,
     backgroundColor: "#F8FAFC",
   },
+
   smallBtnText: {
     color: BRAND.blue,
     fontFamily: FONT.medium,
     fontSize: 13,
   },
+
   smallBtnTextDisabled: {
     color: BRAND.muted,
   },
@@ -1162,6 +1264,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 12,
   },
+
   verifiedPillText: {
     color: BRAND.ok,
     fontFamily: FONT.medium,
@@ -1194,15 +1297,18 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 8,
   },
+
   verifyBtnDisabled: {
     backgroundColor: "#E4E7EC",
   },
+
   verifyBtnText: {
     color: "#FFFFFF",
     fontFamily: FONT.semi,
     fontSize: 14,
     letterSpacing: 0.4,
   },
+
   verifyBtnTextDisabled: {
     color: "#98A2B3",
   },
@@ -1213,6 +1319,7 @@ const styles = StyleSheet.create({
     gap: 6,
     marginTop: 8,
   },
+
   matchText: { fontFamily: FONT.medium, fontSize: 13 },
 
   legalWrap: {
@@ -1223,6 +1330,7 @@ const styles = StyleSheet.create({
     backgroundColor: BRAND.blueSoft,
     borderRadius: 16,
   },
+
   legalText: {
     color: BRAND.muted,
     fontFamily: FONT.regular,
@@ -1230,6 +1338,7 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     textAlign: "center",
   },
+
   legalLink: {
     color: BRAND.blue,
     fontFamily: FONT.semi,
@@ -1244,6 +1353,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: BRAND.blueBorder,
   },
+
   primaryFill: {
     position: "absolute",
     left: 0,
@@ -1252,6 +1362,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     backgroundColor: BRAND.blue,
   },
+
   primaryInner: {
     flexDirection: "row",
     alignItems: "center",
@@ -1260,6 +1371,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     gap: 10,
   },
+
   primaryText: {
     fontFamily: FONT.medium,
     fontSize: 16,
@@ -1274,11 +1386,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 6,
   },
+
   secondaryText: {
     color: BRAND.muted,
     fontFamily: FONT.regular,
     fontSize: 14,
   },
+
   secondaryLink: {
     color: BRAND.blue,
     fontFamily: FONT.semi,
@@ -1292,12 +1406,14 @@ const styles = StyleSheet.create({
     borderTopColor: "#EEF2F7",
     gap: 4,
   },
+
   footerText: {
     fontSize: 14,
     color: BRAND.muted,
     fontFamily: FONT.regular,
     textAlign: "center",
   },
+
   footerZero: {
     fontFamily: Platform.select({
       ios: "System",

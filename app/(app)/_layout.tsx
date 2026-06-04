@@ -1,3 +1,4 @@
+// app/(app)/_layout.tsx
 import * as Notifications from "expo-notifications";
 import { Redirect, Stack, router, usePathname } from "expo-router";
 import React, { useEffect, useRef } from "react";
@@ -36,10 +37,12 @@ function isSupportTextNotification(data: Record<string, any> | null) {
 
 function buildNotificationDedupeKey(data: Record<string, any>) {
   const type = data.type ? String(data.type) : "unknown";
+
   const threadId =
     data.thread_id !== undefined && data.thread_id !== null
       ? String(data.thread_id)
       : "none";
+
   const messageId =
     data.message_id !== undefined && data.message_id !== null
       ? String(data.message_id)
@@ -91,6 +94,9 @@ export default function AppLayout() {
   }, [pathname]);
 
   useEffect(() => {
+    if (isBooting) return;
+    if (!isAuthed) return;
+
     registerForPushNotificationsAsync()
       .then((token) => {
         if (token) {
@@ -100,9 +106,12 @@ export default function AppLayout() {
       .catch((error) => {
         console.log("Push registration failed:", error);
       });
-  }, []);
+  }, [isBooting, isAuthed]);
 
   useEffect(() => {
+    if (isBooting) return;
+    if (!isAuthed) return;
+
     const handleNotificationReceived = async (
       notification: Notifications.Notification | null
     ) => {
@@ -137,9 +146,12 @@ export default function AppLayout() {
     return () => {
       sub.remove();
     };
-  }, []);
+  }, [isBooting, isAuthed]);
 
   useEffect(() => {
+    if (isBooting) return;
+    if (!isAuthed) return;
+
     const handleNotificationResponse = async (
       response: Notifications.NotificationResponse | null
     ) => {
@@ -184,7 +196,7 @@ export default function AppLayout() {
     return () => {
       sub.remove();
     };
-  }, []);
+  }, [isBooting, isAuthed]);
 
   if (isBooting) return null;
   if (!isAuthed) return <Redirect href="/(auth)/sign-in" />;

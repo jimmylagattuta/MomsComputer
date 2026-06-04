@@ -1,37 +1,37 @@
-// app/src/screens/AskMom/AskMomScreen.tsx
+// app/src/screens/PublicAskMom/PublicAskMomScreen.tsx
 import { Ionicons } from "@expo/vector-icons";
 import * as ImageManipulator from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
 import { useRouter } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import {
-  Alert,
-  Animated,
-  Easing,
-  Keyboard,
-  Platform,
-  SafeAreaView,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
+    Alert,
+    Animated,
+    Easing,
+    Keyboard,
+    Platform,
+    SafeAreaView,
+    ScrollView,
+    StyleSheet,
+    Text,
+    View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import AskMomHeader from "./components/AskMomHeader";
-import ChatComposer, { ComposerImage } from "./components/ChatComposer";
-import ChatMessageRow from "./components/ChatMessageRow";
-import HistoryDrawer from "./components/HistoryDrawer";
-import HomeFooterButton from "./components/HomeFooterButton";
-import type { ChatMessage } from "./components/types";
-import { BRAND, H_PADDING } from "./theme";
+import AskMomHeader from "../AskMom/components/AskMomHeader";
+import ChatComposer, { ComposerImage } from "../AskMom/components/ChatComposer";
+import ChatMessageRow from "../AskMom/components/ChatMessageRow";
+import HomeFooterButton from "../AskMom/components/HomeFooterButton";
+import type { ChatMessage } from "../AskMom/components/types";
+import { BRAND, H_PADDING } from "../AskMom/theme";
 
-import { askMom } from "../../services/api/askMom";
+import { PublicAskMomResponse, publicAskMom } from "../../services/api/publicAskMom";
+import { getOrCreateGuestId } from "../../services/guest/guestId";
 import {
-  ConversationSummary,
-  fetchConversation,
-  fetchConversations,
-} from "../../services/api/conversations";
+    clearPublicAskMomChat,
+    loadPublicAskMomChat,
+    savePublicAskMomChat,
+} from "../../services/publicAskMomStorage/publicAskMomLocalChat";
 
 function uid() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -47,10 +47,6 @@ function formatAssistantText(summary: string, steps: string[]) {
   return lines.join("\n");
 }
 
-function roleFromSenderType(senderType: string) {
-  return senderType === "user" ? "user" : "assistant";
-}
-
 const THINKING_OPTIONS = ["One sec, I’m looking into it"];
 
 function pickThinkingText() {
@@ -60,7 +56,7 @@ function pickThinkingText() {
 const PRECHAT_OPENER =
   "I’m here with you. Take your time and tell me what you’re seeing.";
 
-const MAX_IMAGES = 5;
+const MAX_IMAGES = 1;
 
 async function ensureJpegUri(uri: string) {
   const lower = (uri || "").toLowerCase();
@@ -89,7 +85,7 @@ async function ensureJpegUri(uri: string) {
   return result.uri;
 }
 
-export default function AskMomScreen() {
+export default function PublicAskMomScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
@@ -102,16 +98,15 @@ export default function AskMomScreen() {
   // This prevents repeated first-open corrections while staying on the same chat.
   const firstAndroidKeyboardFixDoneRef = useRef(false);
 
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [guestId, setGuestId] = useState<string | null>(null);
+  const [guestBooting, setGuestBooting] = useState(true);
+  const [localChatLoaded, setLocalChatLoaded] = useState(false);
 
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [conversationId, setConversationId] = useState<number | undefined>(
-    undefined
-  );
+  const [lastLimits, setLastLimits] = useState<PublicAskMomResponse["limits"] | null>(null);
 
   const [composerImages, setComposerImages] = useState<ComposerImage[]>([]);
 
@@ -148,13 +143,24 @@ export default function AskMomScreen() {
 
     (async () => {
       try {
-        const data = await fetchConversations();
+        const saved = await loadPublicAskMomChat();
+
         if (!mounted) return;
 
-        setConversations(data);
-        console.log("PRELOADED CONVERSATIONS (AskMomScreen)", data);
+        if (saved?.messages?.length) {
+          prechatSeededRef.current = true;
+          setMessages(saved.messages);
+        }
+
+        if (saved?.last_limits) {
+          setLastLimits(saved.last_limits);
+        }
       } catch (e: any) {
-        console.log("PRELOAD CONVERSATIONS FAILED (AskMomScreen)", e);
+        console.log("PUBLIC ASK MOM LOCAL CHAT LOAD FAILED", e);
+      } finally {
+        if (mounted) {
+          setLocalChatLoaded(true);
+        }
       }
     })();
 
@@ -162,6 +168,47 @@ export default function AskMomScreen() {
       mounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    let mounted = true;
+
+    (async () => {
+      try {
+        const id = await getOrCreateGuestId();
+
+        if (!mounted) return;
+        setGuestId(id);
+      } catch (e: any) {
+        console.log("PUBLIC ASK MOM GUEST ID FAILED", e);
+
+        if (!mounted) return;
+        Alert.alert(
+          "Couldn’t start Ask Mom",
+          "Please close and reopen the app, then try again."
+        );
+      } finally {
+        if (mounted) {
+          setGuestBooting(false);
+        }
+      }
+    })();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!localChatLoaded) return;
+    if (guestBooting) return;
+
+    savePublicAskMomChat({
+      messages,
+      last_limits: lastLimits,
+    }).catch((e) => {
+      console.log("PUBLIC ASK MOM LOCAL CHAT SAVE FAILED", e);
+    });
+  }, [messages, lastLimits, localChatLoaded, guestBooting]);
 
   useEffect(() => {
     const showEvent =
@@ -239,9 +286,10 @@ export default function AskMomScreen() {
   }, [keyboardOpen, keyboardLift, bottomStackHeight, androidLayoutTick]);
 
   useEffect(() => {
+    if (!localChatLoaded) return;
     if (prechatSeededRef.current) return;
 
-    const isFreshThread = messages.length === 0 && !conversationId && !loading;
+    const isFreshThread = messages.length === 0 && !loading && !guestBooting;
     if (!isFreshThread) return;
 
     prechatSeededRef.current = true;
@@ -254,7 +302,7 @@ export default function AskMomScreen() {
     };
 
     setMessages([openerMsg]);
-  }, [messages.length, conversationId, loading]);
+  }, [messages.length, loading, guestBooting, localChatLoaded]);
 
   const startThinkingAnimation = (thinkingId: string, base: string) => {
     let dots = 0;
@@ -276,67 +324,6 @@ export default function AskMomScreen() {
     }
   };
 
-  const handleSelectConversation = async (id: number) => {
-    prechatSeededRef.current = true;
-
-    setDrawerOpen(false);
-    stopThinkingAnimation();
-    setLoading(true);
-
-    try {
-      const detail = await fetchConversation(id);
-
-      console.log("LOADED CONVERSATION DETAIL (AskMomScreen)", detail);
-
-      console.log(
-        "LOADED MESSAGE IMAGES (AskMomScreen)",
-        (detail.messages || []).map((m) => ({
-          id: m.id,
-          sender: m.sender_type,
-          images: (m as any).images,
-        }))
-      );
-
-      setConversationId(id);
-
-      const mapped: ChatMessage[] = (detail.messages || [])
-        .filter((m) => {
-          const hasText = (m?.content || "").trim().length > 0;
-          const imgs = (m as any)?.images;
-          const hasImages = Array.isArray(imgs) && imgs.length > 0;
-          return hasText || hasImages;
-        })
-        .map((m) => {
-          const imgs = Array.isArray((m as any).images) ? (m as any).images : [];
-          const hasImages = imgs.length > 0;
-
-          const text = String(m.content || "").trim();
-
-          return {
-            id: String(m.id),
-            role: roleFromSenderType(String(m.sender_type || "")) as any,
-            text: text.length ? text : hasImages ? "(image)" : "",
-            pending: false,
-            images: imgs.map((uri: string) => ({ uri })),
-          };
-        });
-
-      setMessages(mapped);
-      setComposerImages([]);
-      setInput("");
-
-      setTimeout(() => scrollToBottom(false), 50);
-    } catch (e: any) {
-      console.log("LOAD CONVERSATION FAILED (AskMomScreen)", e);
-      Alert.alert(
-        "Couldn’t load that chat",
-        e?.message ? String(e.message) : "Please try again."
-      );
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleImageLoaded = (uri: string) => {
     setComposerImages((prev) =>
       prev.map((im) => (im.uri === uri ? { ...im, loading: false } : im))
@@ -351,7 +338,7 @@ export default function AskMomScreen() {
         const jpegUri = await ensureJpegUri(u);
         convertedUris.push(jpegUri);
       } catch (err) {
-        console.log("IMAGE CONVERT FAILED", u, err);
+        console.log("PUBLIC IMAGE CONVERT FAILED", u, err);
         convertedUris.push(u);
       }
     }
@@ -380,7 +367,7 @@ export default function AskMomScreen() {
     try {
       const remaining = Math.max(0, MAX_IMAGES - composerImages.length);
       if (remaining <= 0) {
-        Alert.alert("Max 5 images", "Remove one to add another.");
+        Alert.alert("Max 1 image", "Remove the screenshot to add another.");
         return;
       }
 
@@ -409,7 +396,7 @@ export default function AskMomScreen() {
 
       await addImagesToComposer(capturedUris);
     } catch (e: any) {
-      console.log("CAMERA OPEN FAILED (AskMomScreen)", e);
+      console.log("PUBLIC CAMERA OPEN FAILED", e);
       Alert.alert("Couldn’t open camera", "Please try again.");
     }
   };
@@ -418,7 +405,7 @@ export default function AskMomScreen() {
     try {
       const remaining = Math.max(0, MAX_IMAGES - composerImages.length);
       if (remaining <= 0) {
-        Alert.alert("Max 5 images", "Remove one to add another.");
+        Alert.alert("Max 1 image", "Remove the screenshot to add another.");
         return;
       }
 
@@ -426,14 +413,14 @@ export default function AskMomScreen() {
       if (!perm.granted) {
         Alert.alert(
           "Photo access needed",
-          "Please allow photo library access to attach images."
+          "Please allow photo library access to attach an image."
         );
         return;
       }
 
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsMultipleSelection: true,
+        allowsMultipleSelection: false,
         selectionLimit: remaining,
         quality: 0.9,
       });
@@ -448,7 +435,7 @@ export default function AskMomScreen() {
 
       await addImagesToComposer(pickedUris);
     } catch (e: any) {
-      console.log("IMAGE PICK FAILED (AskMomScreen)", e);
+      console.log("PUBLIC IMAGE PICK FAILED", e);
       Alert.alert("Couldn’t open photos", "Please try again.");
     }
   };
@@ -456,7 +443,7 @@ export default function AskMomScreen() {
   const handlePressAddImage = () => {
     const remaining = Math.max(0, MAX_IMAGES - composerImages.length);
     if (remaining <= 0) {
-      Alert.alert("Max 5 images", "Remove one to add another.");
+      Alert.alert("Max 1 image", "Remove the screenshot to add another.");
       return;
     }
 
@@ -476,6 +463,28 @@ export default function AskMomScreen() {
     setComposerImages((prev) => prev.filter((im) => im.uri !== uri));
   };
 
+  const handleOpenHistoryUnavailable = () => {
+    Alert.alert(
+      "History is for accounts",
+      "Create a free account to save and review your Ask Mom conversations.",
+      [
+        { text: "Not now", style: "cancel" },
+        {
+          text: "Sign In",
+          onPress: () => router.push("/(auth)/sign-in" as any),
+        },
+        {
+          text: "Create Account",
+          onPress: () =>
+            router.push({
+              pathname: "/(auth)/sign-up",
+              params: { intent: "more_ask_mom" },
+            } as any),
+        },
+      ]
+    );
+  };
+
   const handleSend = async () => {
     const text = input.trim();
 
@@ -484,6 +493,11 @@ export default function AskMomScreen() {
         "Type a message",
         "Ask anything about what you’re seeing or what happened."
       );
+      return;
+    }
+
+    if (!guestId) {
+      Alert.alert("Still loading", "Please wait one second and try again.");
       return;
     }
 
@@ -518,47 +532,45 @@ export default function AskMomScreen() {
     startThinkingAnimation(thinkingId, thinkingBase);
 
     try {
-      const res = await askMom(text, conversationId, imagesToSend);
+      const res = await publicAskMom(guestId, text, imagesToSend as any);
 
-      if (!conversationId) setConversationId(res.conversation_id);
+      if (res.limits) {
+        setLastLimits(res.limits);
+      }
 
-      const assistantText = formatAssistantText(res.summary, res.steps);
+      const assistantText = formatAssistantText(
+        String(res.summary || ""),
+        Array.isArray(res.steps) ? res.steps : []
+      );
 
       stopThinkingAnimation();
+
       setMessages((prev) =>
         prev.map((m) =>
           m.id === thinkingId
             ? {
-              ...m,
-              text: assistantText,
-              pending: false,
-              show_contact_panel: !!res.show_contact_panel,
-              escalation_reason: res.escalation_reason || null,
-              contact_actions: res.contact_actions || null,
-              contact_draft: res.contact_draft || null,
-              contact_targets: res.contact_targets || null,
-            }
+                ...m,
+                text:
+                  assistantText ||
+                  "I couldn’t read that clearly. Try typing what you see on the screen.",
+                pending: false,
+                show_contact_panel: false,
+                escalation_reason: null,
+                contact_actions: null,
+                contact_draft: null,
+                contact_targets: null,
+              }
             : m
         )
       );
-
-      try {
-        const updated = await fetchConversations();
-        setConversations(updated);
-        console.log("REFRESHED CONVERSATIONS (AskMomScreen)", updated);
-      } catch (e) {
-        console.log("REFRESH CONVERSATIONS FAILED (AskMomScreen)", e);
-      }
     } catch (e: any) {
       stopThinkingAnimation();
 
-      console.log("ASK MOM SEND FAILED", {
-        status: e?.status,
-        message: e?.message,
-        json: e?.json,
-      });
-
       const json = e?.json || {};
+
+      if (json?.limits) {
+        setLastLimits(json.limits);
+      }
 
       const apiMessage =
         json?.message ||
@@ -566,31 +578,46 @@ export default function AskMomScreen() {
         "I couldn’t reach the server right now. Please try again.";
 
       const isLimitError =
-        json?.error === "too_many_images" ||
-        json?.error === "daily_image_limit_reached" ||
         json?.error === "daily_message_limit_reached" ||
+        json?.error === "daily_image_limit_reached" ||
         json?.error === "daily_conversation_limit_reached" ||
-        json?.error === "conversation_message_limit_reached" ||
-        json?.error === "message_too_long" ||
-        json?.error === "rate_limited" ||
-        json?.error === "image_too_large" ||
-        json?.error === "invalid_image_type";
-
-      const finalText = isLimitError
-        ? apiMessage
-        : `${apiMessage}\n\n(If this is urgent or involves money/codes, don’t proceed—tell me what it said.)`;
+        json?.error === "conversation_message_limit_reached";
 
       setMessages((prev) =>
         prev.map((m) =>
           m.id === thinkingId
             ? {
-              ...m,
-              text: finalText,
-              pending: false,
-            }
+                ...m,
+                text: isLimitError
+                  ? `${apiMessage}\n\nCreate a free account to keep going.`
+                  : `${apiMessage}\n\n(If this is urgent or involves money/codes, don’t proceed—tell me what it said.)`,
+                pending: false,
+              }
             : m
         )
       );
+
+      if (isLimitError) {
+        Alert.alert(
+          "Free limit reached",
+          `${apiMessage}\n\nCreate a free account to keep going.`,
+          [
+            { text: "Not now", style: "cancel" },
+            {
+              text: "Sign In",
+              onPress: () => router.push("/(auth)/sign-in" as any),
+            },
+            {
+              text: "Create Free Account",
+              onPress: () =>
+                router.push({
+                  pathname: "/(auth)/sign-up",
+                  params: { intent: "more_ask_mom" },
+                } as any),
+            },
+          ]
+        );
+      }
     } finally {
       setLoading(false);
       setTimeout(() => scrollToBottom(true), 30);
@@ -598,6 +625,10 @@ export default function AskMomScreen() {
   };
 
   const handleClear = () => {
+    clearPublicAskMomChat().catch((e) => {
+      console.log("PUBLIC ASK MOM LOCAL CHAT CLEAR FAILED", e);
+    });
+
     prechatSeededRef.current = false;
     firstAndroidKeyboardFixDoneRef.current = false;
 
@@ -605,9 +636,9 @@ export default function AskMomScreen() {
     Keyboard.dismiss();
     setInput("");
     setComposerImages([]);
+    setLastLimits(null);
     setMessages([]);
     setLoading(false);
-    setConversationId(undefined);
   };
 
   useEffect(() => {
@@ -627,20 +658,24 @@ export default function AskMomScreen() {
     8 +
     androidLayoutTick * 0;
 
+  if (guestBooting || !localChatLoaded) {
+    return (
+      <SafeAreaView style={styles.page}>
+        <View style={[styles.screen, styles.bootScreen]}>
+          <Ionicons name="chatbubble-ellipses" size={34} color={BRAND.blue} />
+          <Text style={styles.bootTitle}>Starting Ask Mom…</Text>
+          <Text style={styles.bootSub}>One sec, setting up your free guest chat.</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.page}>
       <View style={[styles.screen, { paddingTop: 25, paddingBottom: 0 }]}>
-        <HistoryDrawer
-          open={drawerOpen}
-          onClose={() => setDrawerOpen(false)}
-          conversations={conversations}
-          onSelectConversation={handleSelectConversation}
-          onUpdateConversations={setConversations}
-        />
-
         <View style={styles.headerRow}>
           <View style={styles.headerCenter}>
-            <AskMomHeader onOpenHistory={() => setDrawerOpen(true)} />
+            <AskMomHeader onOpenHistory={handleOpenHistoryUnavailable} />
           </View>
 
           <View style={styles.scamlineRight}>
@@ -712,7 +747,7 @@ export default function AskMomScreen() {
 
             {showHomeFooterButton ? (
               <View style={{ paddingBottom: footerSafePad }}>
-                <HomeFooterButton onPress={() => router.replace("/(app)")} />
+                <HomeFooterButton onPress={() => router.replace("/" as any)} />
               </View>
             ) : (
               <View style={{ height: 8 }} />
@@ -736,6 +771,25 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: BRAND.border,
     paddingHorizontal: H_PADDING,
+  },
+
+  bootScreen: {
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+
+  bootTitle: {
+    fontSize: 18,
+    color: BRAND.text,
+    fontWeight: "700",
+    textAlign: "center",
+  },
+
+  bootSub: {
+    fontSize: 13,
+    color: BRAND.muted,
+    textAlign: "center",
   },
 
   headerRow: {

@@ -2,11 +2,16 @@
 import { Redirect } from "expo-router";
 import React from "react";
 import { useAuth } from "./src/auth/AuthProvider";
+import PublicAskMomLanding from "./src/screens/PublicAskMomLanding/PublicAskMomLanding";
 
 export default function Index() {
   const { isAuthed, isBooting } = useAuth();
 
   if (isBooting) return null;
 
-  return <Redirect href={isAuthed ? "/(app)" : "/(auth)/sign-in"} />;
+  if (isAuthed) {
+    return <Redirect href="/(app)" />;
+  }
+
+  return <PublicAskMomLanding />;
 }

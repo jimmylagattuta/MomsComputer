@@ -47,7 +47,7 @@ import HomeSettingsMenu from "./components/HomeSettingsMenu";
  * set DEV_PAYWALL_BYPASS to false.
  */
 const SUBSCRIPTIONS_ENABLED = true;
-const DEV_PAYWALL_BYPASS = true;
+const DEV_PAYWALL_BYPASS = false;
 
 const IS_ANDROID = Platform.OS === "android";
 
@@ -492,6 +492,15 @@ export default function HomeScreen() {
         role?: string;
         admin?: boolean;
         is_admin?: boolean;
+
+        current_calls_this_month?: number | null;
+        calls_this_month?: number | null;
+        monthly_calls_used?: number | null;
+        calls_used_this_month?: number | null;
+
+        monthly_call_limit?: number | null;
+        call_limit?: number | null;
+        monthly_calls_limit?: number | null;
       }
     | undefined;
 
@@ -519,6 +528,44 @@ export default function HomeScreen() {
     user?.role === "super_admin" ||
     user?.admin === true ||
     user?.is_admin === true;
+
+  const currentCallsThisMonth =
+    typeof user?.current_calls_this_month === "number"
+      ? user.current_calls_this_month
+      : typeof user?.calls_this_month === "number"
+        ? user.calls_this_month
+        : typeof user?.monthly_calls_used === "number"
+          ? user.monthly_calls_used
+          : typeof user?.calls_used_this_month === "number"
+            ? user.calls_used_this_month
+            : null;
+
+  const monthlyCallLimit =
+    typeof user?.monthly_call_limit === "number"
+      ? user.monthly_call_limit
+      : typeof user?.call_limit === "number"
+        ? user.call_limit
+        : typeof user?.monthly_calls_limit === "number"
+          ? user.monthly_calls_limit
+          : null;
+
+  console.log("📞 [CallUsage] raw auth object:", auth);
+
+  console.log("📞 [CallUsage] raw auth user:", user);
+
+  console.log("📞 [CallUsage] possible user call fields:", {
+    current_calls_this_month: user?.current_calls_this_month,
+    calls_this_month: user?.calls_this_month,
+    monthly_calls_used: user?.monthly_calls_used,
+    calls_used_this_month: user?.calls_used_this_month,
+
+    monthly_call_limit: user?.monthly_call_limit,
+    call_limit: user?.call_limit,
+    monthly_calls_limit: user?.monthly_calls_limit,
+
+    resolved_currentCallsThisMonth: currentCallsThisMonth,
+    resolved_monthlyCallLimit: monthlyCallLimit,
+  });
 
   const hasPremiumAccess = isAdmin || isPro || DEV_PAYWALL_BYPASS;
 
@@ -550,8 +597,18 @@ export default function HomeScreen() {
       role: user?.role,
       isAdmin,
       isLoggingOut,
+      currentCallsThisMonth,
+      monthlyCallLimit,
     });
-  }, [currentUserId, user?.id, user?.role, isAdmin, isLoggingOut]);
+  }, [
+    currentUserId,
+    user?.id,
+    user?.role,
+    isAdmin,
+    isLoggingOut,
+    currentCallsThisMonth,
+    monthlyCallLimit,
+  ]);
 
   useEffect(() => {
     console.log("🏠 [HomeBadge] textMomUnreadCount changed:", textMomUnreadCount);
@@ -937,6 +994,13 @@ export default function HomeScreen() {
     isLoggingOut,
     textMomUnreadCount,
     willShowBadge: textMomUnreadCount > 0,
+    currentCallsThisMonth,
+    monthlyCallLimit,
+  });
+
+  console.log("📞 [CallUsage] passing to HomeSettingsMenu:", {
+    currentCallsThisMonth,
+    monthlyCallLimit,
   });
 
   return (
@@ -948,6 +1012,8 @@ export default function HomeScreen() {
           <HomeSettingsMenu
             open={settingsOpen}
             disabled={isLoggingOut}
+            currentCallsThisMonth={currentCallsThisMonth}
+            monthlyCallLimit={monthlyCallLimit}
             onToggle={() => setSettingsOpen((prev) => !prev)}
             onClose={() => setSettingsOpen(false)}
             onOpenProfile={handleOpenProfile}

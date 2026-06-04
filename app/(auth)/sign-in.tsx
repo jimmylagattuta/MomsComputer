@@ -52,9 +52,11 @@ function sleep(ms: number) {
 function norm(s: string) {
   return String(s || "").trim();
 }
+
 function normEmail(s: string) {
   return norm(s).toLowerCase();
 }
+
 function looksLikeEmail(email: string) {
   const e = normEmail(email);
   return /^\S+@\S+\.\S+$/.test(e);
@@ -120,6 +122,7 @@ export default function SignInScreen() {
   useEffect(() => {
     const showSub = Keyboard.addListener("keyboardDidShow", () => setKeyboardOpen(true));
     const hideSub = Keyboard.addListener("keyboardDidHide", () => setKeyboardOpen(false));
+
     return () => {
       showSub.remove();
       hideSub.remove();
@@ -254,6 +257,21 @@ export default function SignInScreen() {
     signUpIconAnim.stopAnimation();
   };
 
+  const handleBack = () => {
+    if (anyBusy) return;
+
+    Keyboard.dismiss();
+
+    try {
+      if ((router as any)?.canGoBack?.()) {
+        router.back();
+        return;
+      }
+    } catch {}
+
+    router.replace("/");
+  };
+
   const handleSignIn = async () => {
     if (anyBusy) return;
 
@@ -264,10 +282,12 @@ export default function SignInScreen() {
       Alert.alert("Missing email", "Please enter your email address.");
       return;
     }
+
     if (!looksLikeEmail(em)) {
       Alert.alert("Check your email", "Please enter a valid email address.");
       return;
     }
+
     if (!pw) {
       Alert.alert("Missing password", "Please enter your password.");
       return;
@@ -316,6 +336,7 @@ export default function SignInScreen() {
         try {
           const { getCustomerInfo } = await import("../src/subscriptions/rcClient");
           const info = await getCustomerInfo();
+
           console.log(
             "RC after identify:",
             info?.originalAppUserId,
@@ -371,6 +392,26 @@ export default function SignInScreen() {
 
   return (
     <SafeAreaView style={styles.page}>
+      <Pressable
+        onPress={handleBack}
+        disabled={anyBusy}
+        hitSlop={10}
+        style={({ pressed }) => [
+          styles.floatingBackButton,
+          {
+            top:
+              Platform.OS === "android"
+                ? Math.max(insets.top + 8, 18)
+                : Math.max(insets.top + 4, 14),
+          },
+          pressed && !anyBusy ? styles.floatingBackButtonPressed : null,
+          anyBusy ? styles.floatingBackButtonDisabled : null,
+        ]}
+      >
+        <Ionicons name="chevron-back" size={18} color={BRAND.blue} />
+        <Text style={styles.floatingBackButtonText}>BACK</Text>
+      </Pressable>
+
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
@@ -406,6 +447,7 @@ export default function SignInScreen() {
 
                 <View style={styles.field}>
                   <Text style={styles.label}>Email</Text>
+
                   <View style={styles.inputRow}>
                     <Ionicons name="mail" size={22} color={BRAND.blue} />
                     <TextInput
@@ -426,6 +468,7 @@ export default function SignInScreen() {
 
                 <View style={styles.field}>
                   <Text style={styles.label}>Password</Text>
+
                   <View style={styles.inputRow}>
                     <Ionicons name="lock-closed" size={22} color={BRAND.blue} />
                     <TextInput
@@ -442,6 +485,7 @@ export default function SignInScreen() {
                       autoCorrect={false}
                       textContentType="password"
                     />
+
                     <Pressable onPress={() => setSecure((s) => !s)} disabled={anyBusy} hitSlop={10}>
                       <Ionicons name={secure ? "eye" : "eye-off"} size={22} color={BRAND.muted} />
                     </Pressable>
@@ -464,6 +508,7 @@ export default function SignInScreen() {
                       { width: signInFillWidth, opacity: isSigningIn ? 0.95 : 0 },
                     ]}
                   />
+
                   <View style={styles.primaryInner} pointerEvents="none">
                     {isSigningIn ? (
                       <Animated.View style={{ transform: [{ translateX: signInIconX }] }}>
@@ -506,6 +551,7 @@ export default function SignInScreen() {
                         { width: signUpFillWidth, opacity: isGoingToSignUp ? 0.95 : 0 },
                       ]}
                     />
+
                     <View style={styles.newMemberInner} pointerEvents="none">
                       {isGoingToSignUp ? (
                         <Animated.View style={{ transform: [{ translateX: signUpIconX }] }}>
@@ -563,6 +609,43 @@ export default function SignInScreen() {
 const styles = StyleSheet.create({
   page: { flex: 1, backgroundColor: BRAND.pageBg },
 
+  floatingBackButton: {
+    position: "absolute",
+    left: H_PADDING,
+    zIndex: 100,
+    minHeight: 34,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 2,
+    backgroundColor: BRAND.blueSoft,
+    borderWidth: 1,
+    borderColor: BRAND.blueBorder,
+    shadowColor: "#000",
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 5,
+  },
+
+  floatingBackButtonPressed: {
+    transform: [{ scale: 0.98 }],
+    opacity: 0.9,
+  },
+
+  floatingBackButtonDisabled: {
+    opacity: 0.5,
+  },
+
+  floatingBackButtonText: {
+    color: BRAND.blue,
+    fontFamily: FONT.medium,
+    fontSize: 12,
+    letterSpacing: 0.8,
+  },
+
   logoBannerFullBleed: {
     width: "100%",
     backgroundColor: "#FFFFFF",
@@ -585,7 +668,11 @@ const styles = StyleSheet.create({
     marginTop: -14,
   },
 
-  scrollContent: { flexGrow: 1, justifyContent: "center" },
+  scrollContent: {
+    flexGrow: 1,
+    justifyContent: "center",
+  },
+
   main: { width: "100%" },
 
   form: {
@@ -605,6 +692,7 @@ const styles = StyleSheet.create({
   },
 
   field: { marginTop: 12 },
+
   label: { fontSize: 13, fontFamily: FONT.medium, color: BRAND.text },
 
   inputRow: {
