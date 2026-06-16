@@ -60,6 +60,7 @@ export default {
       "expo-font",
       "expo-notifications",
       "expo-dev-client",
+      "expo-web-browser",
     ],
 
     experiments: {
