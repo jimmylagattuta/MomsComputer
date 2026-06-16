@@ -5,16 +5,16 @@ import * as ImagePicker from "expo-image-picker";
 import { useRouter } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import {
-    Alert,
-    Animated,
-    Easing,
-    Keyboard,
-    Platform,
-    SafeAreaView,
-    ScrollView,
-    StyleSheet,
-    Text,
-    View,
+  Alert,
+  Animated,
+  Easing,
+  Keyboard,
+  Platform,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -26,11 +26,11 @@ import type { ChatMessage } from "../AskMom/components/types";
 import { BRAND, H_PADDING } from "../AskMom/theme";
 
 import { PublicAskMomResponse, publicAskMom } from "../../services/api/publicAskMom";
-import { getOrCreateGuestId } from "../../services/guest/guestId";
+import { getOrCreatePublicAskMomGuestId } from "../../services/publicAskMomStorage/publicAskMomGuestIdentity";
 import {
-    clearPublicAskMomChat,
-    loadPublicAskMomChat,
-    savePublicAskMomChat,
+  clearPublicAskMomChat,
+  loadPublicAskMomChat,
+  savePublicAskMomChat,
 } from "../../services/publicAskMomStorage/publicAskMomLocalChat";
 
 function uid() {
@@ -174,7 +174,7 @@ export default function PublicAskMomScreen() {
 
     (async () => {
       try {
-        const id = await getOrCreateGuestId();
+        const id = await getOrCreatePublicAskMomGuestId();
 
         if (!mounted) return;
         setGuestId(id);
