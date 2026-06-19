@@ -2,7 +2,7 @@ export default {
   expo: {
     name: "moms-computer",
     slug: "moms-computer",
-    version: "1.0.2",
+    version: "1.0.4",
     orientation: "portrait",
     icon: "./assets/images/icon-v3.png",
     scheme: "momscomputer",
@@ -15,6 +15,15 @@ export default {
       icon: "./assets/images/icon-v3.png",
       infoPlist: {
         ITSAppUsesNonExemptEncryption: false,
+
+        NSCameraUsageDescription:
+          "Mom's Computer uses the camera so you can take a photo of a suspicious email, text message, pop-up, letter, or computer screen and send it to Ask Mom for scam-safety guidance.",
+
+        NSPhotoLibraryUsageDescription:
+          "Mom's Computer uses your photo library so you can choose a screenshot or photo of a suspicious message, email, website, pop-up, or document and send it to Ask Mom for scam-safety guidance.",
+
+        NSPhotoLibraryAddUsageDescription:
+          "Mom's Computer may save a copy of a scam-related screenshot or image only if you choose to save it from a support conversation.",
       },
     },
 

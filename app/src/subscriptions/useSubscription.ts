@@ -15,22 +15,30 @@ export function useSubscription() {
 
   const syncRevenueCatIdentity = useCallback(async () => {
     try {
-      const authUserRaw = await SecureStore.getItemAsync("auth_user");
-      const authUser = authUserRaw ? JSON.parse(authUserRaw) : null;
-      const userId = authUser?.id != null ? String(authUser.id) : null;
-
-      if (!userId) {
-        setIdentityReady(true);
-        return false;
-      }
-
+      /**
+       * RevenueCat must be configured even when there is no logged-in Rails user.
+       *
+       * Logged out:
+       *   configureRevenueCat() creates/uses an anonymous RevenueCat customer.
+       *
+       * Logged in:
+       *   configureRevenueCat() first, then identify the real app user id.
+       */
       const ok = await configureRevenueCat();
+
       if (!ok) {
         setIdentityReady(true);
         return false;
       }
 
-      await rcIdentifyUser(userId);
+      const authUserRaw = await SecureStore.getItemAsync("auth_user");
+      const authUser = authUserRaw ? JSON.parse(authUserRaw) : null;
+      const userId = authUser?.id != null ? String(authUser.id) : null;
+
+      if (userId) {
+        await rcIdentifyUser(userId);
+      }
+
       setIdentityReady(true);
       return true;
     } catch (e) {
@@ -42,8 +50,9 @@ export function useSubscription() {
 
   const refresh = useCallback(async () => {
     setLoading(true);
+    setIdentityReady(false);
+
     try {
-      setIdentityReady(false);
       const ready = await syncRevenueCatIdentity();
 
       if (!ready) {
@@ -88,7 +97,9 @@ export function useSubscription() {
 
     const sub: any = Purchases.addCustomerInfoUpdateListener((info) => {
       if (!mounted) return;
+
       setCustomerInfo(info);
+      setIdentityReady(true);
     });
 
     return () => {
@@ -102,5 +113,11 @@ export function useSubscription() {
     return isProActive(customerInfo);
   }, [customerInfo, identityReady]);
 
-  return { customerInfo, isPro, loading, refresh, identityReady };
+  return {
+    customerInfo,
+    isPro,
+    loading,
+    refresh,
+    identityReady,
+  };
 }

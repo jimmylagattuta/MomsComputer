@@ -1,8 +1,16 @@
 // app/src/screens/PublicAskMomLanding/PublicAskMomLanding.tsx
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
-import React, { useLayoutEffect, useMemo, useRef } from "react";
+import { useFocusEffect, useRouter } from "expo-router";
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
+  ActivityIndicator,
   Alert,
   Animated,
   Easing,
@@ -16,6 +24,11 @@ import {
   useWindowDimensions,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import {
+  getCustomerInfo,
+  isProActive,
+  restorePurchases,
+} from "../../subscriptions/rcClient";
 import { FONT } from "../../theme";
 
 const IS_ANDROID = Platform.OS === "android";
@@ -383,7 +396,10 @@ function PremiumPerch() {
   }, [glistenOpacity, glistenX, pulse]);
 
   return (
-    <Animated.View pointerEvents="none" style={[styles.premiumPerch, { transform: [{ scale: pulse }] }]}>
+    <Animated.View
+      pointerEvents="none"
+      style={[styles.premiumPerch, { transform: [{ scale: pulse }] }]}
+    >
       <View style={styles.premiumPerchInner}>
         <Animated.View
           style={[
@@ -401,12 +417,28 @@ function PremiumPerch() {
   );
 }
 
+function AccountSetupPerch() {
+  return (
+    <View pointerEvents="none" style={styles.accountSetupPerch}>
+      <View style={styles.accountSetupPerchInner}>
+        <Ionicons name="person-add" size={10} color={BRAND.blue} />
+        <Text style={styles.accountSetupPerchText}>SETUP</Text>
+      </View>
+    </View>
+  );
+}
+
 export default function PublicAskMomLanding() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
   const { width } = useWindowDimensions();
   const isNarrow = width < 380;
+
+  const [premiumChecking, setPremiumChecking] = useState(true);
+  const [restoreLoading, setRestoreLoading] = useState(false);
+  const [hasPremiumAccess, setHasPremiumAccess] = useState(false);
+  const [activeEntitlementKeys, setActiveEntitlementKeys] = useState<string[]>([]);
 
   const bigBtnTextStyle = useMemo(
     () => [styles.bigBtnText, isNarrow && styles.bigBtnTextNarrow],
@@ -417,22 +449,158 @@ export default function PublicAskMomLanding() {
   const footerPaddingBottom = Math.max(insets.bottom, 10) + 10;
   const footerTotalHeight = FOOTER_MIN_HEIGHT + footerPaddingBottom;
 
+  const refreshPremiumState = useCallback(async (source: string) => {
+    try {
+      console.log("💳 [PublicLanding] refresh premium state started:", source);
+
+      setPremiumChecking(true);
+
+      const info = await getCustomerInfo();
+      const activeKeys = Object.keys(info?.entitlements?.active ?? {});
+      const entitlementPro = isProActive(info);
+      const anyActiveEntitlement = activeKeys.length > 0;
+      const premiumDetected = entitlementPro || anyActiveEntitlement;
+
+      console.log("💳 [PublicLanding] CustomerInfo:", {
+        source,
+        originalAppUserId: info?.originalAppUserId,
+        activeKeys,
+        entitlementPro,
+        anyActiveEntitlement,
+        premiumDetected,
+      });
+
+      setActiveEntitlementKeys(activeKeys);
+      setHasPremiumAccess(premiumDetected);
+    } catch (error) {
+      console.log("💳 [PublicLanding] premium state failed:", source, error);
+
+      setActiveEntitlementKeys([]);
+      setHasPremiumAccess(false);
+    } finally {
+      setPremiumChecking(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshPremiumState("mount");
+  }, [refreshPremiumState]);
+
+  useFocusEffect(
+    useCallback(() => {
+      refreshPremiumState("focus");
+    }, [refreshPremiumState])
+  );
+
   const goToSignIn = () => {
     router.push("/(auth)/sign-in" as any);
   };
 
-  const goToSignUp = () => {
-    router.push("/(auth)/sign-up" as any);
+  const goToSignUp = (featureName?: string) => {
+    router.push({
+      pathname: "/(auth)/sign-up",
+      params: {
+        intent: "premium_account_setup",
+        ...(featureName ? { feature: featureName } : {}),
+      },
+    } as any);
   };
 
-  const showCreateAccountAlert = (featureName: string) => {
+  const goToPaywall = () => {
+    router.push("/paywall" as any);
+  };
+
+  const handleRestorePurchases = async () => {
+    if (restoreLoading) return;
+
+    try {
+      console.log("💳 [PublicLanding] restore purchases started");
+      setRestoreLoading(true);
+      setPremiumChecking(true);
+
+      const info = await restorePurchases();
+      const activeKeys = Object.keys(info?.entitlements?.active ?? {});
+      const entitlementPro = isProActive(info);
+      const anyActiveEntitlement = activeKeys.length > 0;
+      const premiumDetected = entitlementPro || anyActiveEntitlement;
+
+      console.log("💳 [PublicLanding] restore purchases result:", {
+        originalAppUserId: info?.originalAppUserId,
+        activeKeys,
+        entitlementPro,
+        anyActiveEntitlement,
+        premiumDetected,
+      });
+
+      setActiveEntitlementKeys(activeKeys);
+      setHasPremiumAccess(premiumDetected);
+
+      if (premiumDetected) {
+        Alert.alert(
+          "Premium restored",
+          "Premium is active. Create an account when you’re ready to use Text Mom and Call Mom.",
+          [
+            { text: "Not Now", style: "cancel" },
+            { text: "Create Account", onPress: () => goToSignUp() },
+          ]
+        );
+      } else {
+        Alert.alert(
+          "No active subscription found",
+          "We couldn’t find an active subscription for this Apple or Google account."
+        );
+      }
+    } catch (error: any) {
+      console.log("💳 [PublicLanding] restore purchases failed:", error);
+
+      const message = String(
+        error?.message || "We couldn’t restore purchases right now. Please try again."
+      );
+
+      Alert.alert("Restore failed", message);
+    } finally {
+      setRestoreLoading(false);
+      setPremiumChecking(false);
+    }
+  };
+
+  const handlePremiumFeaturePress = (featureName: string) => {
+    console.log("💳 [PublicLanding] premium feature pressed:", {
+      featureName,
+      premiumChecking,
+      hasPremiumAccess,
+      activeEntitlementKeys,
+    });
+
+    if (premiumChecking) {
+      Alert.alert(
+        "Checking subscription",
+        "Give us one second to confirm your subscription status."
+      );
+      refreshPremiumState(`press:${featureName}`);
+      return;
+    }
+
+    if (hasPremiumAccess) {
+      Alert.alert(
+        "Account setup needed",
+        "Premium is active. Create an account to use Text Mom and Call Mom so support can connect this subscription to you.",
+        [
+          { text: "Not Now", style: "cancel" },
+          { text: "Create Account", onPress: () => goToSignUp(featureName) },
+        ]
+      );
+      return;
+    }
+
     Alert.alert(
-      "Create an account",
-      `${featureName} is available after creating an account and choosing a plan.`,
+      `${featureName} needs Premium`,
+      "Ask Mom is free with limits. Text Mom and Call Mom require Premium, and you can subscribe before creating an account.",
       [
         { text: "Not Now", style: "cancel" },
+        { text: "View Premium", onPress: goToPaywall },
         { text: "Sign In", onPress: goToSignIn },
-        { text: "Create Account", onPress: goToSignUp },
+        { text: "Create Account", onPress: () => goToSignUp(featureName) },
       ]
     );
   };
@@ -440,6 +608,17 @@ export default function PublicAskMomLanding() {
   const handleAskMom = () => {
     router.push("/public-ask-mom" as any);
   };
+
+  const showPremiumLocks = !premiumChecking && !hasPremiumAccess;
+  const showAccountSetupLocks = !premiumChecking && hasPremiumAccess;
+
+  console.log("💳 [PublicLanding] visual decision:", {
+    premiumChecking,
+    hasPremiumAccess,
+    activeEntitlementKeys,
+    showPremiumLocks,
+    showAccountSetupLocks,
+  });
 
   return (
     <SafeAreaView style={styles.page} edges={["top", "left", "right"]}>
@@ -506,21 +685,30 @@ export default function PublicAskMomLanding() {
               </Pressable>
 
               <Pressable
-                onPress={() => showCreateAccountAlert("Email / Text Mom")}
+                onPress={() => handlePremiumFeaturePress("Email / Text Mom")}
                 style={({ pressed }) => [
                   styles.bigBtn,
                   styles.premiumBtn,
                   pressed && styles.bigBtnPressed,
                 ]}
               >
-                <PremiumPerch />
+                {showPremiumLocks && <PremiumPerch />}
+                {showAccountSetupLocks && <AccountSetupPerch />}
 
                 <View style={styles.iconPill}>
                   <Ionicons name="mail" size={34} color={BRAND.blue} />
 
-                  <View style={styles.lockDot}>
-                    <Ionicons name="lock-closed" size={12} color="#FFFFFF" />
-                  </View>
+                  {showPremiumLocks && (
+                    <View style={styles.lockDot}>
+                      <Ionicons name="lock-closed" size={12} color="#FFFFFF" />
+                    </View>
+                  )}
+
+                  {showAccountSetupLocks && (
+                    <View style={styles.accountDot}>
+                      <Ionicons name="person-add" size={12} color="#FFFFFF" />
+                    </View>
+                  )}
                 </View>
 
                 <View style={styles.textWrap}>
@@ -534,26 +722,41 @@ export default function PublicAskMomLanding() {
                     EMAIL / TEXT MOM
                   </Text>
 
-                  <Text style={styles.btnSubText}>For non-urgent questions</Text>
+                  <Text style={styles.btnSubText}>
+                    {hasPremiumAccess
+                      ? "Create account to message support"
+                      : premiumChecking
+                        ? "Checking Premium status..."
+                        : "For non-urgent questions"}
+                  </Text>
                 </View>
               </Pressable>
 
               <Pressable
-                onPress={() => showCreateAccountAlert("Call Mom")}
+                onPress={() => handlePremiumFeaturePress("Call Mom")}
                 style={({ pressed }) => [
                   styles.bigBtn,
                   styles.premiumBtn,
                   pressed && styles.bigBtnPressed,
                 ]}
               >
-                <PremiumPerch />
+                {showPremiumLocks && <PremiumPerch />}
+                {showAccountSetupLocks && <AccountSetupPerch />}
 
                 <View style={styles.iconPill}>
                   <Ionicons name="call" size={34} color={BRAND.blue} />
 
-                  <View style={styles.lockDot}>
-                    <Ionicons name="lock-closed" size={12} color="#FFFFFF" />
-                  </View>
+                  {showPremiumLocks && (
+                    <View style={styles.lockDot}>
+                      <Ionicons name="lock-closed" size={12} color="#FFFFFF" />
+                    </View>
+                  )}
+
+                  {showAccountSetupLocks && (
+                    <View style={styles.accountDot}>
+                      <Ionicons name="person-add" size={12} color="#FFFFFF" />
+                    </View>
+                  )}
                 </View>
 
                 <View style={styles.textWrap}>
@@ -567,19 +770,85 @@ export default function PublicAskMomLanding() {
                     CALL MOM
                   </Text>
 
-                  <Text style={styles.btnSubText}>When you need to talk to a real person</Text>
+                  <Text style={styles.btnSubText}>
+                    {hasPremiumAccess
+                      ? "Create account to connect phone support"
+                      : premiumChecking
+                        ? "Checking Premium status..."
+                        : "When you need to talk to a real person"}
+                  </Text>
                 </View>
               </Pressable>
 
+              <View style={styles.subscriptionNotice}>
+                {premiumChecking ? (
+                  <ActivityIndicator size="small" color={BRAND.blue} />
+                ) : (
+                  <Ionicons
+                    name={hasPremiumAccess ? "checkmark-circle" : "information-circle-outline"}
+                    size={17}
+                    color={BRAND.blue}
+                  />
+                )}
+
+                <Text style={styles.subscriptionNoticeText}>
+                  {hasPremiumAccess
+                    ? "Premium is active. Text Mom and Call Mom need account setup so we can connect support to you."
+                    : "Ask Mom is free with limits. You can view Premium before creating an account. Text Mom and Call Mom need Premium and account setup."}
+                </Text>
+              </View>
+
               <Pressable
-                onPress={goToSignUp}
+                onPress={goToPaywall}
+                style={({ pressed }) => [
+                  styles.viewPremiumButton,
+                  hasPremiumAccess && styles.viewPremiumButtonActive,
+                  pressed && styles.viewPremiumButtonPressed,
+                ]}
+              >
+                <Ionicons
+                  name={hasPremiumAccess ? "checkmark-circle" : "diamond"}
+                  size={18}
+                  color="#FFFFFF"
+                />
+                <Text style={styles.viewPremiumText}>
+                  {hasPremiumAccess ? "Premium Active" : "View Premium"}
+                </Text>
+              </Pressable>
+
+              {!hasPremiumAccess && (
+                <Pressable
+                  onPress={handleRestorePurchases}
+                  disabled={restoreLoading}
+                  style={({ pressed }) => [
+                    styles.restorePurchasesButton,
+                    pressed && !restoreLoading && styles.restorePurchasesButtonPressed,
+                    restoreLoading && styles.restorePurchasesButtonDisabled,
+                  ]}
+                >
+                  {restoreLoading ? (
+                    <ActivityIndicator size="small" color={BRAND.blue} />
+                  ) : (
+                    <Ionicons name="refresh" size={18} color={BRAND.blue} />
+                  )}
+
+                  <Text style={styles.restorePurchasesText}>
+                    {restoreLoading ? "Restoring..." : "Restore Purchases"}
+                  </Text>
+                </Pressable>
+              )}
+
+              <Pressable
+                onPress={() => goToSignUp()}
                 style={({ pressed }) => [
                   styles.createAccountButton,
                   pressed && styles.createAccountButtonPressed,
                 ]}
               >
                 <Ionicons name="person-add" size={18} color={BRAND.blue} />
-                <Text style={styles.createAccountText}>Create Free Account</Text>
+                <Text style={styles.createAccountText}>
+                  {hasPremiumAccess ? "Finish Account Setup" : "Create Free Account"}
+                </Text>
               </Pressable>
             </View>
           </View>
@@ -737,6 +1006,27 @@ const styles = StyleSheet.create({
     lineHeight: IS_ANDROID ? 16 : 17,
   },
 
+  subscriptionNotice: {
+    marginBottom: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+    backgroundColor: BRAND.blueSoft,
+    borderWidth: 1,
+    borderColor: BRAND.blueBorder,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+  },
+
+  subscriptionNoticeText: {
+    flex: 1,
+    color: BRAND.muted,
+    fontFamily: FONT.regular,
+    fontSize: 12,
+    lineHeight: 17,
+  },
+
   actionsWrap: {
     flex: 1,
     justifyContent: "flex-start",
@@ -808,6 +1098,37 @@ const styles = StyleSheet.create({
     letterSpacing: 1.1,
   },
 
+  accountSetupPerch: {
+    position: "absolute",
+    top: -10,
+    right: 8,
+    zIndex: 30,
+  },
+
+  accountSetupPerchInner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    borderRadius: 999,
+    paddingHorizontal: 11,
+    paddingVertical: 4,
+    backgroundColor: BRAND.blueSoft,
+    borderWidth: 1,
+    borderColor: BRAND.blueBorder,
+    shadowColor: BRAND.blue,
+    shadowOpacity: 0.18,
+    shadowRadius: 9,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 4,
+  },
+
+  accountSetupPerchText: {
+    color: BRAND.blue,
+    fontFamily: FONT.medium,
+    fontSize: 10,
+    letterSpacing: 1.1,
+  },
+
   bigBtnPressed: {
     transform: [{ scale: 0.99 }],
     opacity: 0.98,
@@ -844,6 +1165,25 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
 
+  accountDot: {
+    position: "absolute",
+    top: -10,
+    right: -10,
+    width: 28,
+    height: 28,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: BRAND.blue,
+    borderWidth: 2,
+    borderColor: "#FFFFFF",
+    shadowColor: BRAND.blue,
+    shadowOpacity: 0.28,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 4,
+  },
+
   textWrap: {
     flex: 1,
     minWidth: 0,
@@ -868,6 +1208,65 @@ const styles = StyleSheet.create({
     fontSize: IS_ANDROID ? 13 : 14,
     letterSpacing: 0.2,
     flexShrink: 1,
+  },
+
+  viewPremiumButton: {
+    width: "100%",
+    minHeight: 50,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: BRAND.blue,
+    backgroundColor: BRAND.blue,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+
+  viewPremiumButtonActive: {
+    borderColor: BRAND.blue,
+    backgroundColor: BRAND.blue,
+  },
+
+  viewPremiumButtonPressed: {
+    transform: [{ scale: 0.99 }],
+    opacity: 0.95,
+  },
+
+  viewPremiumText: {
+    color: "#FFFFFF",
+    fontFamily: FONT.medium,
+    fontSize: 15,
+    letterSpacing: 0.2,
+  },
+
+  restorePurchasesButton: {
+    width: "100%",
+    minHeight: 48,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: BRAND.blueBorder,
+    backgroundColor: "#FFFFFF",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+
+  restorePurchasesButtonPressed: {
+    transform: [{ scale: 0.99 }],
+    opacity: 0.95,
+  },
+
+  restorePurchasesButtonDisabled: {
+    opacity: 0.65,
+  },
+
+  restorePurchasesText: {
+    color: BRAND.blue,
+    fontFamily: FONT.medium,
+    fontSize: 15,
+    letterSpacing: 0.2,
   },
 
   createAccountButton: {

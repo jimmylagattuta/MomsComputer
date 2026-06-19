@@ -21,7 +21,8 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../src/auth/AuthProvider";
 import { postJson } from "../src/services/api/client";
-import { rcIdentifyUser, rcLogoutUser } from "../src/subscriptions/rcClient";
+import { linkRevenueCatCustomerAfterAuth } from "../src/subscriptions/linkRevenueCatCustomer";
+import { rcLogoutUser } from "../src/subscriptions/rcClient";
 import { FONT } from "../src/theme";
 
 const BRAND = {
@@ -331,19 +332,19 @@ export default function SignInScreen() {
       await SecureStore.setItemAsync("auth_user", JSON.stringify(u));
 
       if (u?.id != null) {
-        await rcIdentifyUser(String(u.id));
+        await linkRevenueCatCustomerAfterAuth(u.id);
 
         try {
           const { getCustomerInfo } = await import("../src/subscriptions/rcClient");
           const info = await getCustomerInfo();
 
           console.log(
-            "RC after identify:",
+            "RC after auth/link:",
             info?.originalAppUserId,
             Object.keys(info?.entitlements?.active ?? {})
           );
         } catch (e) {
-          console.log("RC after identify: failed", e);
+          console.log("RC after auth/link: failed", e);
         }
       }
 

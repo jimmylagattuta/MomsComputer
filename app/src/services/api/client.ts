@@ -9,6 +9,7 @@ const USE_LOCAL_API = false; // ⬅️ set to false to use EXPO_PUBLIC_API_BASE_
 const LOCAL_API_BASE_URL = "http://192.168.12.142:3000";
 // Work
 // const LOCAL_API_BASE_URL = "http://10.7.7.123:3000";
+
 // Centralized resolver
 export const API_BASE =
   USE_LOCAL_API
@@ -25,9 +26,11 @@ if (__DEV__ === false && USE_LOCAL_API) {
 async function parseJson(res: Response) {
   const text = await res.text();
   let json: any = null;
+
   try {
     json = text ? JSON.parse(text) : null;
   } catch {}
+
   return json;
 }
 
@@ -53,6 +56,24 @@ export async function postJson(path: string, body: any, token?: string) {
 export async function getJson(path: string, token?: string) {
   const res = await fetch(`${API_BASE}${path}`, {
     method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+
+  const json = await parseJson(res);
+
+  return {
+    ok: res.ok,
+    status: res.status,
+    json,
+  };
+}
+
+export async function deleteJson(path: string, token?: string) {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "DELETE",
     headers: {
       "Content-Type": "application/json",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),

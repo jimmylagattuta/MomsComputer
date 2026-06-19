@@ -28,6 +28,10 @@ const IS_ANDROID = Platform.OS === "android";
 
 const TERMS_URL = "https://momscomputer.com/terms/";
 const PRIVACY_URL = "https://momscomputer.com/privacy/";
+const IOS_SUBSCRIPTION_MANAGEMENT_URL = "https://apps.apple.com/account/subscriptions";
+const ANDROID_SUBSCRIPTION_MANAGEMENT_URL =
+  "https://play.google.com/store/account/subscriptions";
+
 const MOMS_LOGO_URL =
   "https://res.cloudinary.com/djtsuktwb/image/upload/v1769703507/ChatGPT_Image_Jan_29_2026_08_00_07_AM_1_3_gtqeo8.jpg";
 
@@ -119,6 +123,21 @@ function getActiveEntitlement(info: CustomerInfo | null) {
   return info?.entitlements?.active?.[ENTITLEMENT_ID] ?? null;
 }
 
+function getSubscriptionManagementUrl(info: CustomerInfo | null) {
+  const revenueCatManagementUrl =
+    typeof (info as any)?.managementURL === "string"
+      ? String((info as any).managementURL)
+      : "";
+
+  if (revenueCatManagementUrl) {
+    return revenueCatManagementUrl;
+  }
+
+  return Platform.OS === "ios"
+    ? IOS_SUBSCRIPTION_MANAGEMENT_URL
+    : ANDROID_SUBSCRIPTION_MANAGEMENT_URL;
+}
+
 function openUrl(url: string) {
   Linking.openURL(url).catch(() => {
     Alert.alert("Unable to open link", url);
@@ -151,17 +170,42 @@ export default function PaywallScreen() {
   const mainPrice = mainPackage ? formatPrice(mainPackage) : "";
   const mainDuration = mainPackage ? getDurationText(mainPackage) : "";
 
-  useEffect(() => {
-    if (!identityReady) return;
-
-    if (!subLoading && isPro) {
+  const goHome = () => {
+    try {
+      router.replace("/" as any);
+    } catch {
       try {
-        // @ts-ignore
-        if (router?.canGoBack?.()) {
-          router.back();
-        }
+        router.back();
       } catch {}
     }
+  };
+
+  const handleClose = () => {
+    goHome();
+  };
+
+  const handleManageSubscription = () => {
+    const url = getSubscriptionManagementUrl(customerInfo);
+
+    Alert.alert(
+      "Manage subscription",
+      "This will open your Apple or Google subscription settings.",
+      [
+        {
+          text: "Cancel",
+          style: "cancel",
+        },
+        {
+          text: "Open",
+          onPress: () => openUrl(url),
+        },
+      ]
+    );
+  };
+
+  useEffect(() => {
+    // Do not auto-pop the screen just because the subscription is active.
+    // We want the user to see the Premium Active screen, then choose X/Continue.
   }, [identityReady, isPro, subLoading, router]);
 
   const loadOfferings = useCallback(async () => {
@@ -210,17 +254,6 @@ export default function PaywallScreen() {
     loadOfferings();
   }, [loadOfferings]);
 
-  const handleClose = () => {
-    try {
-      // @ts-ignore
-      if (router?.canGoBack?.()) {
-        router.back();
-      } else {
-        router.replace("/(app)");
-      }
-    } catch {}
-  };
-
   const handlePurchase = async (pkg: PurchasesPackage) => {
     try {
       setPurchaseLoadingId(pkg.identifier);
@@ -236,18 +269,25 @@ export default function PaywallScreen() {
       await refreshSubscription();
 
       Alert.alert(
-        "You are subscribed",
-        "Premium is active. Your paid features are now unlocked."
+        "Premium is active",
+        "Create an account to save Ask Mom history and use Text Mom or Call Mom.",
+        [
+          {
+            text: "Create Account",
+            onPress: () => {
+              router.push({
+                pathname: "/(auth)/sign-up",
+                params: { intent: "premium_account_setup" },
+              } as any);
+            },
+          },
+          {
+            text: "Continue",
+            style: "cancel",
+            onPress: goHome,
+          },
+        ]
       );
-
-      try {
-        // @ts-ignore
-        if (router?.canGoBack?.()) {
-          router.back();
-        } else {
-          router.replace("/(app)");
-        }
-      } catch {}
     } catch (error: any) {
       const message = String(error?.message ?? "The subscription did not go through.");
 
@@ -279,6 +319,21 @@ export default function PaywallScreen() {
   if (isPro) {
     return (
       <SafeAreaView style={styles.safeArea} edges={["top", "left", "right", "bottom"]}>
+        <View style={styles.successTopBar}>
+          <View />
+
+          <Pressable
+            onPress={handleClose}
+            hitSlop={10}
+            style={({ pressed }) => [
+              styles.successCloseButton,
+              pressed && styles.pressed,
+            ]}
+          >
+            <Ionicons name="close" size={22} color={BRAND.mutedDark} />
+          </Pressable>
+        </View>
+
         <View style={styles.center}>
           <View style={styles.successOrb}>
             <Ionicons name="checkmark-circle" size={52} color={BRAND.green} />
@@ -295,7 +350,8 @@ export default function PaywallScreen() {
           <Text style={styles.successTitle}>Premium is active</Text>
 
           <Text style={styles.successBody}>
-            Your paid features are ready to use.
+            Your subscription is active. Create an account to save Ask Mom
+            history and use Email / Text Mom or Call Mom.
           </Text>
 
           {!!activeEntitlement?.expirationDate && (
@@ -312,8 +368,41 @@ export default function PaywallScreen() {
               pressed && styles.primaryButtonPressed,
             ]}
           >
-            <Text style={styles.primaryButtonText}>Continue</Text>
+            <Text style={styles.primaryButtonText}>Continue to Home</Text>
           </Pressable>
+
+          <Pressable
+            onPress={() => {
+              router.push({
+                pathname: "/(auth)/sign-up",
+                params: { intent: "premium_account_setup" },
+              } as any);
+            }}
+            style={({ pressed }) => [
+              styles.secondaryButton,
+              pressed && styles.pressed,
+            ]}
+          >
+            <Ionicons name="person-add-outline" size={17} color={BRAND.blue} />
+            <Text style={styles.secondaryButtonText}>Create Account</Text>
+          </Pressable>
+
+          <Pressable
+            onPress={handleManageSubscription}
+            style={({ pressed }) => [
+              styles.manageSubscriptionButton,
+              pressed && styles.pressed,
+            ]}
+          >
+            <Ionicons name="open-outline" size={17} color={BRAND.mutedDark} />
+            <Text style={styles.manageSubscriptionButtonText}>
+              Manage Subscription
+            </Text>
+          </Pressable>
+
+          <Text style={styles.manageSubscriptionHelper}>
+            Opens your Apple or Google subscription settings.
+          </Text>
         </View>
       </SafeAreaView>
     );
@@ -365,12 +454,19 @@ export default function PaywallScreen() {
           <Text style={styles.heroSubTitle}>Ask Mom is free</Text>
 
           <Text style={styles.heroBody}>
-            Upgrade to access extra support features.
+            Premium unlocks Email / Text Mom and Call Mom.
           </Text>
 
           <View style={styles.freePill}>
             <Ionicons name="heart" size={16} color={BRAND.pink} />
             <Text style={styles.freePillText}>You can keep using Ask Mom for free</Text>
+          </View>
+
+          <View style={styles.limitsPill}>
+            <Ionicons name="timer-outline" size={16} color={BRAND.blueDark} />
+            <Text style={styles.limitsPillText}>
+              Free Ask Mom includes daily usage limits.
+            </Text>
           </View>
         </View>
 
@@ -383,7 +479,7 @@ export default function PaywallScreen() {
               <Text style={styles.infoCardTitle}>Free</Text>
             </View>
 
-            <Text style={styles.infoCardLead}>Included with the app</Text>
+            <Text style={styles.infoCardLead}>Included with free Ask Mom limits</Text>
 
             <View style={styles.featureList}>
               <View style={styles.featureRow}>
@@ -401,22 +497,17 @@ export default function PaywallScreen() {
               <Text style={styles.infoCardTitle}>Premium</Text>
             </View>
 
-            <Text style={styles.infoCardLead}>Unlock the other features</Text>
+            <Text style={styles.infoCardLead}>Unlock direct support options</Text>
 
             <View style={styles.featureList}>
               <View style={styles.featureRow}>
                 <Ionicons name="checkmark-circle" size={20} color={BRAND.green} />
-                <Text style={styles.featureText}>Text Mom</Text>
+                <Text style={styles.featureText}>Email / Text Mom</Text>
               </View>
 
               <View style={styles.featureRow}>
                 <Ionicons name="checkmark-circle" size={20} color={BRAND.green} />
                 <Text style={styles.featureText}>Call Mom</Text>
-              </View>
-
-              <View style={styles.featureRow}>
-                <Ionicons name="checkmark-circle" size={20} color={BRAND.green} />
-                <Text style={styles.featureText}>Extra support features</Text>
               </View>
             </View>
           </View>
@@ -467,6 +558,11 @@ export default function PaywallScreen() {
                 in your account settings.
               </Text>
 
+              <Text style={styles.planHelpText}>
+                You can subscribe before creating an account. Email / Text Mom
+                and Call Mom require account setup so we can connect support to you.
+              </Text>
+
               <Pressable
                 onPress={() => mainPackage && handlePurchase(mainPackage)}
                 disabled={!mainPackage || !!purchaseLoadingId || offeringsLoading}
@@ -506,7 +602,8 @@ export default function PaywallScreen() {
         <View style={styles.noteCard}>
           <Ionicons name="information-circle-outline" size={20} color={BRAND.blue} />
           <Text style={styles.noteText}>
-            Ask Mom stays free. Premium is only for the extra support features.
+            Ask Mom is free to try and keep using with daily limits. Premium
+            unlocks Email / Text Mom and Call Mom.
           </Text>
         </View>
 
@@ -549,6 +646,33 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     padding: 24,
     backgroundColor: BRAND.pageBg,
+  },
+
+  successTopBar: {
+    position: "absolute",
+    top: IS_ANDROID ? 18 : 10,
+    left: 18,
+    right: 18,
+    zIndex: 20,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+
+  successCloseButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: BRAND.card,
+    borderWidth: 1,
+    borderColor: BRAND.borderSoft,
+    shadowColor: BRAND.shadow,
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 3,
   },
 
   loadingOrb: {
@@ -788,6 +912,27 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
 
+  limitsPill: {
+    marginTop: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: BRAND.blueSoft,
+    borderWidth: 1,
+    borderColor: BRAND.blueBorder,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 999,
+    zIndex: 2,
+  },
+
+  limitsPillText: {
+    color: BRAND.blueDark,
+    fontSize: 14,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+
   comparisonWrap: {
     marginTop: 16,
     gap: 14,
@@ -951,7 +1096,7 @@ const styles = StyleSheet.create({
     color: BRAND.muted,
     fontSize: 15,
     lineHeight: 21,
-    marginTop: 2,
+    marginTop: 10,
   },
 
   primaryButtonFull: {
@@ -998,12 +1143,43 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 18,
     marginTop: 14,
+    flexDirection: "row",
+    gap: 8,
   },
 
   secondaryButtonText: {
     color: BRAND.blue,
     fontSize: 15,
     fontWeight: "900",
+  },
+
+  manageSubscriptionButton: {
+    alignSelf: "center",
+    minHeight: 48,
+    borderRadius: 16,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: BRAND.border,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 18,
+    marginTop: 12,
+    flexDirection: "row",
+    gap: 8,
+  },
+
+  manageSubscriptionButtonText: {
+    color: BRAND.mutedDark,
+    fontSize: 15,
+    fontWeight: "900",
+  },
+
+  manageSubscriptionHelper: {
+    marginTop: 8,
+    color: BRAND.muted,
+    fontSize: 13,
+    lineHeight: 18,
+    textAlign: "center",
   },
 
   errorWrap: {

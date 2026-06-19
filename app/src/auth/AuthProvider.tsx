@@ -2,6 +2,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as SecureStore from "expo-secure-store";
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { rcLogoutUser } from "../subscriptions/rcClient";
 
 type AuthedUser = {
   id?: string | number;
@@ -126,10 +127,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     ];
 
     try {
-      // 1) AsyncStorage: remove session + app caches
+      // 1) Move RevenueCat away from the signed-in user.
+      // This creates a fresh anonymous RC customer for logged-out purchase flow.
+      try {
+        await rcLogoutUser();
+      } catch {}
+
+      // 2) AsyncStorage: remove session + app caches
       await AsyncStorage.multiRemove(APP_CACHE_KEYS);
 
-      // 2) SecureStore: remove auth secrets
+      // 3) SecureStore: remove auth secrets
       try {
         await SecureStore.deleteItemAsync("auth_token");
       } catch {}
@@ -137,7 +144,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         await SecureStore.deleteItemAsync("auth_user");
       } catch {}
     } finally {
-      // 3) Always flip state even if storage operations throw
+      // 4) Always flip state even if storage operations throw
       setIsAuthed(false);
       setUser(null);
     }

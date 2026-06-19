@@ -47,6 +47,7 @@ type HomeSettingsMenuProps = {
   onOpenProfile: () => void;
   onOpenSubscription: () => void;
   onChangePassword: () => void;
+  onDeleteAccount: () => void;
   onLogout: () => void;
 };
 
@@ -60,6 +61,7 @@ export default function HomeSettingsMenu({
   onOpenProfile,
   onOpenSubscription,
   onChangePassword,
+  onDeleteAccount,
   onLogout,
 }: HomeSettingsMenuProps) {
   const [externalLinkTarget, setExternalLinkTarget] =
@@ -252,6 +254,32 @@ export default function HomeSettingsMenu({
                 <Text style={styles.dropdownItemText}>Change Password</Text>
                 <Text style={styles.dropdownItemSubtext}>
                   Update your current password
+                </Text>
+              </View>
+            </Pressable>
+
+            <View style={styles.divider} />
+
+            <Pressable
+              onPress={onDeleteAccount}
+              style={({ pressed }) => [
+                styles.dropdownItem,
+                pressed && styles.dropdownDangerPressed,
+              ]}
+            >
+              <Ionicons
+                name="trash-outline"
+                size={20}
+                color={BRAND.dangerText}
+              />
+              <View style={styles.textBlock}>
+                <Text
+                  style={[styles.dropdownItemText, { color: BRAND.dangerText }]}
+                >
+                  Delete Account
+                </Text>
+                <Text style={styles.dropdownItemSubtext}>
+                  Permanently delete your account
                 </Text>
               </View>
             </Pressable>

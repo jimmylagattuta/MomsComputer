@@ -19,13 +19,18 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
 import { useAuth } from "../auth/AuthProvider";
 import {
   completeSignUp,
   requestPhoneCode,
   verifyPhoneCode,
 } from "../services/auth";
+import { linkRevenueCatCustomerAfterAuth } from "../subscriptions/linkRevenueCatCustomer";
+import { getCustomerInfo, isProActive } from "../subscriptions/rcClient";
 import { FONT } from "./../theme";
 
 const BRAND = {
@@ -142,12 +147,69 @@ export default function SignUpScreen() {
   const [generalError, setGeneralError] = useState<string | null>(null);
   const [inlineSuccess, setInlineSuccess] = useState<string | null>(null);
 
+  const [checkingPremiumCarryover, setCheckingPremiumCarryover] =
+    useState(true);
+  const [hasPremiumCarryover, setHasPremiumCarryover] = useState(false);
+  const [premiumCarryoverKeys, setPremiumCarryoverKeys] = useState<string[]>(
+    [],
+  );
+
   const [pwHint, setPwHint] = useState<PwHintState>("hidden");
-  const confirmTypingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const confirmTypingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
 
   useEffect(() => {
-    const showSub = Keyboard.addListener("keyboardDidShow", () => setKeyboardOpen(true));
-    const hideSub = Keyboard.addListener("keyboardDidHide", () => setKeyboardOpen(false));
+    let mounted = true;
+
+    (async () => {
+      try {
+        console.log("💳 [SignUp] checking anonymous subscription carryover");
+
+        const info = await getCustomerInfo();
+        const activeKeys = Object.keys(info?.entitlements?.active ?? {});
+        const entitlementPro = isProActive(info);
+        const anyActiveEntitlement = activeKeys.length > 0;
+        const premiumDetected = entitlementPro || anyActiveEntitlement;
+
+        console.log("💳 [SignUp] subscription carryover result:", {
+          originalAppUserId: info?.originalAppUserId,
+          activeKeys,
+          entitlementPro,
+          anyActiveEntitlement,
+          premiumDetected,
+        });
+
+        if (!mounted) return;
+
+        setPremiumCarryoverKeys(activeKeys);
+        setHasPremiumCarryover(premiumDetected);
+      } catch (error) {
+        console.log("💳 [SignUp] subscription carryover check failed:", error);
+
+        if (!mounted) return;
+
+        setPremiumCarryoverKeys([]);
+        setHasPremiumCarryover(false);
+      } finally {
+        if (mounted) {
+          setCheckingPremiumCarryover(false);
+        }
+      }
+    })();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const showSub = Keyboard.addListener("keyboardDidShow", () =>
+      setKeyboardOpen(true),
+    );
+    const hideSub = Keyboard.addListener("keyboardDidHide", () =>
+      setKeyboardOpen(false),
+    );
 
     return () => {
       showSub.remove();
@@ -190,7 +252,9 @@ export default function SignUpScreen() {
     setGeneralError(null);
   };
 
-  const clearFieldErrorsOnEdit = (field: "name" | "email" | "phone" | "code" | "password") => {
+  const clearFieldErrorsOnEdit = (
+    field: "name" | "email" | "phone" | "code" | "password",
+  ) => {
     if (field === "name") setNameError(null);
     if (field === "email") setEmailError(null);
 
@@ -303,7 +367,11 @@ export default function SignUpScreen() {
 
     if (!w) return [{ scaleX: fillAnim }] as any;
 
-    return [{ translateX: -w / 2 }, { scaleX: fillAnim }, { translateX: w / 2 }] as any;
+    return [
+      { translateX: -w / 2 },
+      { scaleX: fillAnim },
+      { translateX: w / 2 },
+    ] as any;
   }, [btnWidth, fillAnim]);
 
   const runFillAnim = () =>
@@ -340,21 +408,35 @@ export default function SignUpScreen() {
 
     if (!fn) return { field: "name", message: "Please enter your first name." };
     if (!em) return { field: "email", message: "Please enter your email." };
-    if (!looksLikeEmail(em)) return { field: "email", message: "That email doesn’t look right." };
-    if (!phoneDigits) return { field: "phone", message: "Please enter your phone number." };
+    if (!looksLikeEmail(em))
+      return { field: "email", message: "That email doesn’t look right." };
+    if (!phoneDigits)
+      return { field: "phone", message: "Please enter your phone number." };
 
     if (phoneDigits.length !== 10) {
-      return { field: "phone", message: "Enter a valid 10-digit phone number." };
+      return {
+        field: "phone",
+        message: "Enter a valid 10-digit phone number.",
+      };
     }
 
     if (!phoneVerified || !verificationToken) {
-      return { field: "phone", message: "Please verify your phone number first." };
+      return {
+        field: "phone",
+        message: "Please verify your phone number first.",
+      };
     }
 
     if (!pw) return { field: "password", message: "Please create a password." };
-    if (pw.length < 8) return { field: "password", message: "Password must be at least 8 characters." };
-    if (!pc) return { field: "password", message: "Please re-type your password." };
-    if (pw !== pc) return { field: "password", message: "Passwords do not match." };
+    if (pw.length < 8)
+      return {
+        field: "password",
+        message: "Password must be at least 8 characters.",
+      };
+    if (!pc)
+      return { field: "password", message: "Please re-type your password." };
+    if (pw !== pc)
+      return { field: "password", message: "Passwords do not match." };
 
     return null;
   };
@@ -452,7 +534,9 @@ export default function SignUpScreen() {
       const result = await requestPhoneCode(phone);
 
       if (!result?.ok) {
-        setCategorizedError(result?.error || "Could not send verification code.");
+        setCategorizedError(
+          result?.error || "Could not send verification code.",
+        );
         return;
       }
 
@@ -562,6 +646,19 @@ export default function SignUpScreen() {
       await SecureStore.setItemAsync("auth_token", token);
       await SecureStore.setItemAsync("auth_user", JSON.stringify(user || {}));
 
+      if (user?.id != null) {
+        console.log(
+          "💳 [SignUp] linking RevenueCat customer after account creation",
+          {
+            userId: user.id,
+            hadPremiumCarryover: hasPremiumCarryover,
+            premiumCarryoverKeys,
+          },
+        );
+
+        await linkRevenueCatCustomerAfterAuth(user.id);
+      }
+
       await afterNextPaint();
       await letAnimationBeSeen(700);
 
@@ -575,7 +672,9 @@ export default function SignUpScreen() {
     } catch {
       await resetFillAnim();
       setIsSigningUp(false);
-      setGeneralError("Network error. Could not reach backend. Check LAN IP, Rails bind, and CORS.");
+      setGeneralError(
+        "Network error. Could not reach backend. Check LAN IP, Rails bind, and CORS.",
+      );
     }
   };
 
@@ -617,7 +716,8 @@ export default function SignUpScreen() {
           style={[
             styles.logoBannerFullBleed,
             {
-              paddingTop: Math.max(insets.top, 10) + (Platform.OS === "android" ? 8 : 0),
+              paddingTop:
+                Math.max(insets.top, 10) + (Platform.OS === "android" ? 8 : 0),
               paddingBottom: LOGO_BOTTOM_GAP,
             },
           ]}
@@ -626,7 +726,12 @@ export default function SignUpScreen() {
           <Image source={{ uri: LOGO_URI }} style={styles.logoFullBleed} />
         </View>
 
-        <View style={[styles.screen, { paddingBottom: Math.max(insets.bottom, 10) }]}>
+        <View
+          style={[
+            styles.screen,
+            { paddingBottom: Math.max(insets.bottom, 10) },
+          ]}
+        >
           <ScrollView
             style={{ flex: 1 }}
             contentContainerStyle={styles.scrollContent}
@@ -638,16 +743,52 @@ export default function SignUpScreen() {
                 <Text style={styles.title}>Sign Up</Text>
                 <Text style={styles.subtitle}>Create your account</Text>
 
+                {hasPremiumCarryover && (
+                  <View style={styles.premiumCarryoverBox}>
+                    <View style={styles.premiumCarryoverIcon}>
+                      <Ionicons name="diamond" size={18} color={BRAND.blue} />
+                    </View>
+
+                    <View style={styles.premiumCarryoverTextWrap}>
+                      <Text style={styles.premiumCarryoverTitle}>
+                        Premium will carry over
+                      </Text>
+                      <Text style={styles.premiumCarryoverText}>
+                        After you create this account, we’ll connect your active
+                        subscription to it so you can use Email / Text Mom and
+                        Call Mom.
+                      </Text>
+                    </View>
+                  </View>
+                )}
+
+                {!hasPremiumCarryover && checkingPremiumCarryover && (
+                  <View style={styles.premiumCheckingBox}>
+                    <Ionicons name="refresh" size={16} color={BRAND.muted} />
+                    <Text style={styles.premiumCheckingText}>
+                      Checking subscription status…
+                    </Text>
+                  </View>
+                )}
+
                 {!!generalError && (
                   <View style={styles.errorBox}>
-                    <Ionicons name="alert-circle" size={20} color={BRAND.danger} />
+                    <Ionicons
+                      name="alert-circle"
+                      size={20}
+                      color={BRAND.danger}
+                    />
                     <Text style={styles.errorText}>{generalError}</Text>
                   </View>
                 )}
 
                 {!!inlineSuccess && (
                   <View style={styles.successBox}>
-                    <Ionicons name="checkmark-circle" size={20} color={BRAND.ok} />
+                    <Ionicons
+                      name="checkmark-circle"
+                      size={20}
+                      color={BRAND.ok}
+                    />
                     <Text style={styles.successText}>{inlineSuccess}</Text>
                   </View>
                 )}
@@ -657,7 +798,11 @@ export default function SignUpScreen() {
 
                   {!!nameError && (
                     <View style={styles.fieldErrorBox}>
-                      <Ionicons name="alert-circle" size={16} color={BRAND.danger} />
+                      <Ionicons
+                        name="alert-circle"
+                        size={16}
+                        color={BRAND.danger}
+                      />
                       <Text style={styles.fieldErrorText}>{nameError}</Text>
                     </View>
                   )}
@@ -685,7 +830,11 @@ export default function SignUpScreen() {
                 <View style={styles.field}>
                   <Text style={styles.label}>Last Name (optional)</Text>
                   <View style={styles.inputRow}>
-                    <Ionicons name="person-outline" size={22} color={BRAND.blue} />
+                    <Ionicons
+                      name="person-outline"
+                      size={22}
+                      color={BRAND.blue}
+                    />
                     <TextInput
                       value={lastName}
                       onChangeText={(t) => {
@@ -709,7 +858,11 @@ export default function SignUpScreen() {
 
                   {!!emailError && (
                     <View style={styles.fieldErrorBox}>
-                      <Ionicons name="alert-circle" size={16} color={BRAND.danger} />
+                      <Ionicons
+                        name="alert-circle"
+                        size={16}
+                        color={BRAND.danger}
+                      />
                       <Text style={styles.fieldErrorText}>{emailError}</Text>
                     </View>
                   )}
@@ -735,7 +888,11 @@ export default function SignUpScreen() {
                     />
                     {email.trim().length > 0 && (
                       <Ionicons
-                        name={looksLikeEmail(email) ? "checkmark-circle" : "close-circle"}
+                        name={
+                          looksLikeEmail(email)
+                            ? "checkmark-circle"
+                            : "close-circle"
+                        }
                         size={20}
                         color={looksLikeEmail(email) ? BRAND.ok : BRAND.muted}
                         style={{ opacity: 0.9 }}
@@ -747,12 +904,17 @@ export default function SignUpScreen() {
                 <View style={styles.field}>
                   <Text style={styles.label}>Phone Number</Text>
                   <Text style={styles.helperText}>
-                    We’ll text you a 6-digit confirmation code before account creation.
+                    We’ll text you a 6-digit confirmation code before account
+                    creation.
                   </Text>
 
                   {!!phoneError && (
                     <View style={styles.fieldErrorBox}>
-                      <Ionicons name="alert-circle" size={16} color={BRAND.danger} />
+                      <Ionicons
+                        name="alert-circle"
+                        size={16}
+                        color={BRAND.danger}
+                      />
                       <Text style={styles.fieldErrorText}>{phoneError}</Text>
                     </View>
                   )}
@@ -766,14 +928,24 @@ export default function SignUpScreen() {
                       placeholderTextColor="#b3b5b9a8"
                       keyboardType="phone-pad"
                       style={styles.input}
-                      editable={!isSigningUp && !isSendingCode && !isVerifyingCode}
+                      editable={
+                        !isSigningUp && !isSendingCode && !isVerifyingCode
+                      }
                       returnKeyType="next"
                       maxLength={14}
                     />
                     {phoneVerified ? (
-                      <Ionicons name="checkmark-circle" size={20} color={BRAND.ok} />
+                      <Ionicons
+                        name="checkmark-circle"
+                        size={20}
+                        color={BRAND.ok}
+                      />
                     ) : digitsOnly(phone).length === 10 ? (
-                      <Ionicons name="phone-portrait-outline" size={20} color={BRAND.blue} />
+                      <Ionicons
+                        name="phone-portrait-outline"
+                        size={20}
+                        color={BRAND.blue}
+                      />
                     ) : null}
                   </View>
 
@@ -810,7 +982,11 @@ export default function SignUpScreen() {
 
                     {phoneVerified && (
                       <View style={styles.verifiedPill}>
-                        <Ionicons name="shield-checkmark" size={14} color={BRAND.ok} />
+                        <Ionicons
+                          name="shield-checkmark"
+                          size={14}
+                          color={BRAND.ok}
+                        />
                         <Text style={styles.verifiedPillText}>Verified</Text>
                       </View>
                     )}
@@ -825,7 +1001,11 @@ export default function SignUpScreen() {
 
                       {!!codeError && (
                         <View style={styles.fieldErrorBox}>
-                          <Ionicons name="alert-circle" size={16} color={BRAND.danger} />
+                          <Ionicons
+                            name="alert-circle"
+                            size={16}
+                            color={BRAND.danger}
+                          />
                           <Text style={styles.fieldErrorText}>{codeError}</Text>
                         </View>
                       )}
@@ -878,7 +1058,11 @@ export default function SignUpScreen() {
 
                   {!!passwordError && (
                     <View style={styles.fieldErrorBox}>
-                      <Ionicons name="alert-circle" size={16} color={BRAND.danger} />
+                      <Ionicons
+                        name="alert-circle"
+                        size={16}
+                        color={BRAND.danger}
+                      />
                       <Text style={styles.fieldErrorText}>{passwordError}</Text>
                     </View>
                   )}
@@ -892,7 +1076,9 @@ export default function SignUpScreen() {
                         clearFieldErrorsOnEdit("password");
 
                         if (pwHint !== "hidden" && passwordConfirm) {
-                          setPwHint(t === passwordConfirm ? "match" : "mismatch");
+                          setPwHint(
+                            t === passwordConfirm ? "match" : "mismatch",
+                          );
                         }
                       }}
                       secureTextEntry={secure1}
@@ -907,7 +1093,11 @@ export default function SignUpScreen() {
                       disabled={isSigningUp}
                       hitSlop={10}
                     >
-                      <Ionicons name={secure1 ? "eye" : "eye-off"} size={22} color={BRAND.muted} />
+                      <Ionicons
+                        name={secure1 ? "eye" : "eye-off"}
+                        size={22}
+                        color={BRAND.muted}
+                      />
                     </Pressable>
                   </View>
                 </View>
@@ -936,7 +1126,11 @@ export default function SignUpScreen() {
                       disabled={isSigningUp}
                       hitSlop={10}
                     >
-                      <Ionicons name={secure2 ? "eye" : "eye-off"} size={22} color={BRAND.muted} />
+                      <Ionicons
+                        name={secure2 ? "eye" : "eye-off"}
+                        size={22}
+                        color={BRAND.muted}
+                      />
                     </Pressable>
                   </View>
 
@@ -953,7 +1147,9 @@ export default function SignUpScreen() {
                           { color: hintIsMatch ? BRAND.ok : BRAND.danger },
                         ]}
                       >
-                        {hintIsMatch ? "Passwords match" : "Passwords don’t match"}
+                        {hintIsMatch
+                          ? "Passwords match"
+                          : "Passwords don’t match"}
                       </Text>
                     </View>
                   )}
@@ -962,16 +1158,23 @@ export default function SignUpScreen() {
                 <View style={styles.legalWrap}>
                   <Text style={styles.legalText}>
                     By signing up, you agree to our{" "}
-                    <Text style={styles.legalLink} onPress={() => openUrl(TERMS_URL)}>
+                    <Text
+                      style={styles.legalLink}
+                      onPress={() => openUrl(TERMS_URL)}
+                    >
                       Terms & Conditions
                     </Text>{" "}
                     and{" "}
-                    <Text style={styles.legalLink} onPress={() => openUrl(PRIVACY_POLICY_URL)}>
+                    <Text
+                      style={styles.legalLink}
+                      onPress={() => openUrl(PRIVACY_POLICY_URL)}
+                    >
                       Privacy Policy
                     </Text>
-                    . You also agree to receive transactional text messages for verification and
-                    support. Message frequency varies. Message and data rates may apply. Reply STOP
-                    to opt out and HELP for help.
+                    . You also agree to receive transactional text messages for
+                    verification and support. Message frequency varies. Message
+                    and data rates may apply. Reply STOP to opt out and HELP for
+                    help.
                   </Text>
                 </View>
 
@@ -990,12 +1193,17 @@ export default function SignUpScreen() {
                     pointerEvents="none"
                     style={[
                       styles.primaryFill,
-                      { transform: fillTransform, opacity: isSigningUp ? 0.95 : 0 },
+                      {
+                        transform: fillTransform,
+                        opacity: isSigningUp ? 0.95 : 0,
+                      },
                     ]}
                   />
                   <View style={styles.primaryInner} pointerEvents="none">
                     {isSigningUp ? (
-                      <Animated.View style={{ transform: [{ translateX: iconTravel }] }}>
+                      <Animated.View
+                        style={{ transform: [{ translateX: iconTravel }] }}
+                      >
                         <Ionicons name="walk" size={22} color="#FFFFFF" />
                       </Animated.View>
                     ) : (
@@ -1014,8 +1222,14 @@ export default function SignUpScreen() {
                 </Pressable>
 
                 <View style={styles.secondaryRow}>
-                  <Text style={styles.secondaryText}>Already have an account?</Text>
-                  <Pressable onPress={goToSignIn} disabled={isSigningUp} hitSlop={10}>
+                  <Text style={styles.secondaryText}>
+                    Already have an account?
+                  </Text>
+                  <Pressable
+                    onPress={goToSignIn}
+                    disabled={isSigningUp}
+                    hitSlop={10}
+                  >
                     <Text style={styles.secondaryLink}>Sign In</Text>
                   </Pressable>
                 </View>
@@ -1029,7 +1243,8 @@ export default function SignUpScreen() {
             <View style={styles.footer}>
               <Ionicons name="shield-checkmark" size={22} color={BRAND.blue} />
               <Text style={styles.footerText}>
-                Mom&apos;s Scam Helpline{"\n"}Since 2<Text style={styles.footerZero}>0</Text>13
+                Mom&apos;s Scam Helpline{"\n"}Since 2
+                <Text style={styles.footerZero}>0</Text>13
               </Text>
             </View>
           )}
@@ -1123,6 +1338,70 @@ const styles = StyleSheet.create({
     marginTop: 4,
     marginBottom: 12,
     fontFamily: FONT.regular,
+  },
+
+  premiumCarryoverBox: {
+    marginTop: 12,
+    marginBottom: 4,
+    padding: 12,
+    borderRadius: 16,
+    backgroundColor: BRAND.blueSoft,
+    borderWidth: 1,
+    borderColor: BRAND.blueBorder,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+  },
+
+  premiumCarryoverIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: BRAND.blueBorder,
+  },
+
+  premiumCarryoverTextWrap: {
+    flex: 1,
+    minWidth: 0,
+  },
+
+  premiumCarryoverTitle: {
+    color: BRAND.text,
+    fontFamily: FONT.medium,
+    fontSize: 14,
+    lineHeight: 18,
+  },
+
+  premiumCarryoverText: {
+    marginTop: 3,
+    color: BRAND.muted,
+    fontFamily: FONT.regular,
+    fontSize: 12,
+    lineHeight: 17,
+  },
+
+  premiumCheckingBox: {
+    marginTop: 12,
+    marginBottom: 4,
+    padding: 10,
+    borderRadius: 14,
+    backgroundColor: "#F8FAFC",
+    borderWidth: 1,
+    borderColor: BRAND.border,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7,
+  },
+
+  premiumCheckingText: {
+    color: BRAND.muted,
+    fontFamily: FONT.regular,
+    fontSize: 12,
   },
 
   field: { marginTop: 12 },

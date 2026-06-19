@@ -465,20 +465,16 @@ export default function PublicAskMomScreen() {
 
   const handleOpenHistoryUnavailable = () => {
     Alert.alert(
-      "History is for accounts",
-      "Create a free account to save and review your Ask Mom conversations.",
+      "Create account for history",
+      "Ask Mom works for free as a guest. Create an account only if you want to save and review your conversations later.",
       [
-        { text: "Not now", style: "cancel" },
-        {
-          text: "Sign In",
-          onPress: () => router.push("/(auth)/sign-in" as any),
-        },
+        { text: "Not Now", style: "cancel" },
         {
           text: "Create Account",
           onPress: () =>
             router.push({
               pathname: "/(auth)/sign-up",
-              params: { intent: "more_ask_mom" },
+              params: { intent: "more_ask_mom", feature: "Ask Mom History" },
             } as any),
         },
       ]
@@ -686,6 +682,13 @@ export default function PublicAskMomScreen() {
           </View>
         </View>
 
+        <View style={styles.saveNotice}>
+          <Ionicons name="information-circle-outline" size={16} color={BRAND.blue} />
+          <Text style={styles.saveNoticeText}>
+            Ask Mom chats are only saved after you create an account.
+          </Text>
+        </View>
+
         <ScrollView
           ref={scrollRef}
           style={{ flex: 1 }}
@@ -819,6 +822,28 @@ const styles = StyleSheet.create({
     color: BRAND.muted,
     textAlign: "center",
     lineHeight: 13,
+  },
+
+  saveNotice: {
+    marginTop: 8,
+    marginBottom: 4,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    backgroundColor: "#F3F7FF",
+    borderWidth: 1,
+    borderColor: "#D6E6FF",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+  },
+
+  saveNoticeText: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 16,
+    color: BRAND.muted,
+    textAlign: "center",
   },
 
   momBadge: {
