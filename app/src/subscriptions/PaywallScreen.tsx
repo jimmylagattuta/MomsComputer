@@ -1,10 +1,18 @@
 // app/src/subscriptions/PaywallScreen.tsx
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useFocusEffect, useRouter } from "expo-router";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ActivityIndicator,
   Alert,
+  AppState,
+  AppStateStatus,
   Image,
   Linking,
   Platform,
@@ -59,6 +67,10 @@ const BRAND = {
   purpleSoft: "#F1EEFF",
   shadow: "#0F172A",
 };
+
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function formatPrice(pkg: PurchasesPackage) {
   // @ts-ignore
@@ -123,6 +135,10 @@ function getActiveEntitlement(info: CustomerInfo | null) {
   return info?.entitlements?.active?.[ENTITLEMENT_ID] ?? null;
 }
 
+function hasAnyActiveEntitlement(info: CustomerInfo | null) {
+  return Object.keys(info?.entitlements?.active ?? {}).length > 0;
+}
+
 function getSubscriptionManagementUrl(info: CustomerInfo | null) {
   const revenueCatManagementUrl =
     typeof (info as any)?.managementURL === "string"
@@ -144,9 +160,23 @@ function openUrl(url: string) {
   });
 }
 
+async function invalidateRevenueCatCustomerInfoCache() {
+  try {
+    const anyPurchases = Purchases as any;
+
+    if (typeof anyPurchases.invalidateCustomerInfoCache === "function") {
+      await anyPurchases.invalidateCustomerInfoCache();
+      console.log("💳 [Paywall] RevenueCat customer info cache invalidated");
+    }
+  } catch (error) {
+    console.log("💳 [Paywall] invalidate customer info cache skipped:", error);
+  }
+}
+
 export default function PaywallScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const appStateRef = useRef<AppStateStatus>(AppState.currentState);
 
   const {
     isPro,
@@ -160,11 +190,19 @@ export default function PaywallScreen() {
   const [packages, setPackages] = useState<PurchasesPackage[]>([]);
   const [offeringsError, setOfferingsError] = useState<string | null>(null);
   const [purchaseLoadingId, setPurchaseLoadingId] = useState<string | null>(null);
+  const [forceRefreshing, setForceRefreshing] = useState(false);
 
   const activeEntitlement = useMemo(
     () => getActiveEntitlement(customerInfo),
     [customerInfo]
   );
+
+  const anyActiveEntitlement = useMemo(
+    () => hasAnyActiveEntitlement(customerInfo),
+    [customerInfo]
+  );
+
+  const premiumActive = isPro || anyActiveEntitlement;
 
   const mainPackage = packages?.[0] ?? null;
   const mainPrice = mainPackage ? formatPrice(mainPackage) : "";
@@ -183,6 +221,74 @@ export default function PaywallScreen() {
   const handleClose = () => {
     goHome();
   };
+
+  const forceRefreshSubscriptionState = useCallback(
+    async (source: string): Promise<CustomerInfo | null> => {
+      try {
+        console.log("💳 [Paywall] force refresh started:", source);
+
+        setForceRefreshing(true);
+
+        const configured = await configureRevenueCat();
+
+        if (!configured) {
+          console.log("💳 [Paywall] force refresh skipped: RC not configured");
+          return null;
+        }
+
+        await invalidateRevenueCatCustomerInfoCache();
+
+        const info = await Purchases.getCustomerInfo();
+
+        console.log("💳 [Paywall] force refresh CustomerInfo:", {
+          source,
+          originalAppUserId: info?.originalAppUserId,
+          activeKeys: Object.keys(info?.entitlements?.active ?? {}),
+          checkedAt: new Date().toISOString(),
+        });
+
+        await refreshSubscription();
+
+        return info;
+      } catch (error) {
+        console.log("💳 [Paywall] force refresh failed:", source, error);
+
+        try {
+          await refreshSubscription();
+        } catch {}
+
+        return null;
+      } finally {
+        setForceRefreshing(false);
+      }
+    },
+    [refreshSubscription]
+  );
+
+  const waitForPurchaseToSettle = useCallback(
+    async (): Promise<CustomerInfo | null> => {
+      const delays = [600, 1200, 2000, 3200];
+
+      for (let i = 0; i < delays.length; i += 1) {
+        await delay(delays[i]);
+
+        const info = await forceRefreshSubscriptionState(
+          `purchase-settle-${i + 1}`
+        );
+
+        const activeKeys = Object.keys(info?.entitlements?.active ?? {});
+
+        if (activeKeys.length > 0) {
+          console.log("💳 [Paywall] purchase entitlement detected:", activeKeys);
+          return info;
+        }
+      }
+
+      console.log("💳 [Paywall] purchase settle finished without active keys");
+      return null;
+    },
+    [forceRefreshSubscriptionState]
+  );
 
   const handleManageSubscription = () => {
     const url = getSubscriptionManagementUrl(customerInfo);
@@ -206,7 +312,31 @@ export default function PaywallScreen() {
   useEffect(() => {
     // Do not auto-pop the screen just because the subscription is active.
     // We want the user to see the Premium Active screen, then choose X/Continue.
-  }, [identityReady, isPro, subLoading, router]);
+  }, [identityReady, premiumActive, subLoading, router]);
+
+  useFocusEffect(
+    useCallback(() => {
+      forceRefreshSubscriptionState("focus");
+    }, [forceRefreshSubscriptionState])
+  );
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (nextAppState) => {
+      const previousAppState = appStateRef.current;
+      const returningToApp =
+        previousAppState.match(/inactive|background/) && nextAppState === "active";
+
+      appStateRef.current = nextAppState;
+
+      if (returningToApp) {
+        forceRefreshSubscriptionState("app-active");
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [forceRefreshSubscriptionState]);
 
   const loadOfferings = useCallback(async () => {
     setOfferingsLoading(true);
@@ -265,8 +395,26 @@ export default function PaywallScreen() {
         return;
       }
 
+      console.log("💳 [Paywall] purchase started:", {
+        packageId: pkg.identifier,
+      });
+
       await Purchases.purchasePackage(pkg);
-      await refreshSubscription();
+
+      console.log("💳 [Paywall] purchase returned, waiting for entitlement");
+
+      const settledInfo = await waitForPurchaseToSettle();
+      const settledActiveKeys = Object.keys(
+        settledInfo?.entitlements?.active ?? {}
+      );
+
+      if (!settledActiveKeys.length) {
+        Alert.alert(
+          "Purchase received",
+          "Your purchase was received. It may take a moment for Premium to appear. Please close and reopen Premium if it does not update."
+        );
+        return;
+      }
 
       Alert.alert(
         "Premium is active",
@@ -299,7 +447,7 @@ export default function PaywallScreen() {
     }
   };
 
-  const screenLoading = !identityReady || subLoading;
+  const screenLoading = !identityReady || subLoading || forceRefreshing;
 
   if (screenLoading) {
     return (
@@ -310,13 +458,13 @@ export default function PaywallScreen() {
           </View>
 
           <Text style={styles.loadingTitle}>Loading Premium</Text>
-          <Text style={styles.loadingSub}>Getting your options ready…</Text>
+          <Text style={styles.loadingSub}>Checking your subscription status…</Text>
         </View>
       </SafeAreaView>
     );
   }
 
-  if (isPro) {
+  if (premiumActive) {
     return (
       <SafeAreaView style={styles.safeArea} edges={["top", "left", "right", "bottom"]}>
         <View style={styles.successTopBar}>
@@ -401,7 +549,8 @@ export default function PaywallScreen() {
           </Pressable>
 
           <Text style={styles.manageSubscriptionHelper}>
-            Opens your Apple or Google subscription settings.
+            Opens your Apple or Google subscription settings. When you come back,
+            this screen checks your subscription again.
           </Text>
         </View>
       </SafeAreaView>

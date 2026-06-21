@@ -27,6 +27,9 @@ const IS_ANDROID = Platform.OS === "android";
 
 const TERMS_URL = "https://momscomputer.com/terms/";
 const PRIVACY_URL = "https://momscomputer.com/privacy/";
+const IOS_SUBSCRIPTION_SETTINGS_URL = "https://apps.apple.com/account/subscriptions";
+const ANDROID_SUBSCRIPTION_SETTINGS_URL =
+  "https://play.google.com/store/account/subscriptions";
 const MOMS_LOGO_URL =
   "https://res.cloudinary.com/djtsuktwb/image/upload/v1769703507/ChatGPT_Image_Jan_29_2026_08_00_07_AM_1_3_gtqeo8.jpg";
 
@@ -121,6 +124,22 @@ function getActiveEntitlement(info: CustomerInfo | null) {
 function openUrl(url: string) {
   Linking.openURL(url).catch(() => {
     Alert.alert("Unable to open link", url);
+  });
+}
+
+function openSubscriptionSettings() {
+  const url =
+    Platform.OS === "ios"
+      ? IOS_SUBSCRIPTION_SETTINGS_URL
+      : ANDROID_SUBSCRIPTION_SETTINGS_URL;
+
+  Linking.openURL(url).catch(() => {
+    Alert.alert(
+      "Unable to open subscription settings",
+      Platform.OS === "ios"
+        ? "Open the App Store app, tap your account, then open Subscriptions."
+        : "Open the Google Play Store, tap your profile, then open Payments & subscriptions."
+    );
   });
 }
 
@@ -476,6 +495,20 @@ export default function SubscriptionPrivilegesScreen() {
               </Text>
 
               <Pressable
+                onPress={openSubscriptionSettings}
+                style={({ pressed }) => [
+                  styles.subscriptionSettingsButton,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <Ionicons name="settings-outline" size={18} color={BRAND.blue} />
+                <Text style={styles.subscriptionSettingsButtonText}>
+                  Open Subscription Settings
+                </Text>
+                <Ionicons name="open-outline" size={17} color={BRAND.blue} />
+              </Pressable>
+
+              <Pressable
                 onPress={handleBack}
                 style={({ pressed }) => [
                   styles.primaryButtonFull,
@@ -550,7 +583,9 @@ export default function SubscriptionPrivilegesScreen() {
 
           <Text style={styles.noteText}>
             {isPro
-              ? "Premium is active on your account. You can use your paid support features from the home screen."
+              ? Platform.OS === "ios"
+                ? "Premium is active on your account. To manage or cancel your plan, open Apple subscription settings."
+                : "Premium is active on your account. To manage or cancel your plan, open Google Play subscription settings."
               : "Ask Mom stays free. Premium is only for the extra support features."}
           </Text>
         </View>
@@ -1032,6 +1067,29 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 21,
     marginTop: 2,
+  },
+
+  subscriptionSettingsButton: {
+    width: "100%",
+    minHeight: 52,
+    borderRadius: 18,
+    backgroundColor: BRAND.blueSoft,
+    borderWidth: 1,
+    borderColor: BRAND.blueBorder,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 9,
+    paddingHorizontal: 14,
+    marginTop: 16,
+  },
+
+  subscriptionSettingsButtonText: {
+    flexShrink: 1,
+    color: BRAND.blue,
+    fontSize: 16,
+    fontWeight: "900",
+    textAlign: "center",
   },
 
   primaryButtonFull: {

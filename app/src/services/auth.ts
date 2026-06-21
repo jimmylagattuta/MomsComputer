@@ -29,7 +29,11 @@ function buildErrorMessage(payload: any, fallback: string) {
     detailedMessages.push(payload.errors.trim());
   }
 
-  if (payload.errors && typeof payload.errors === "object" && !Array.isArray(payload.errors)) {
+  if (
+    payload.errors &&
+    typeof payload.errors === "object" &&
+    !Array.isArray(payload.errors)
+  ) {
     for (const [field, value] of Object.entries(payload.errors)) {
       if (Array.isArray(value)) {
         for (const msg of value) {
@@ -92,13 +96,6 @@ async function patchJson(path: string, body: any, token?: string) {
     headers.Authorization = `Bearer ${token}`;
   }
 
-  console.log("[auth.patchJson] request", {
-    path,
-    body,
-    hasToken: !!token,
-    apiBase: API_BASE,
-  });
-
   const response = await fetch(`${API_BASE}${path}`, {
     method: "PATCH",
     headers,
@@ -108,17 +105,9 @@ async function patchJson(path: string, body: any, token?: string) {
   let json: any = {};
   try {
     json = await response.json();
-  } catch (error) {
-    console.log("[auth.patchJson] failed to parse json", error);
+  } catch {
     json = {};
   }
-
-  console.log("[auth.patchJson] response", {
-    path,
-    ok: response.ok,
-    status: response.status,
-    json,
-  });
 
   return {
     ok: response.ok,
@@ -136,14 +125,9 @@ export async function requestPhoneCode(
     cooldown?: number;
   }>
 > {
-  console.log("[auth.requestPhoneCode] raw phone", phone);
-
   const e164 = toE164Us(phone);
 
-  console.log("[auth.requestPhoneCode] e164", e164);
-
   if (!e164) {
-    console.log("[auth.requestPhoneCode] blocked before request - invalid phone");
     return {
       ok: false,
       error: "Enter a valid 10-digit phone number",
@@ -151,17 +135,11 @@ export async function requestPhoneCode(
   }
 
   try {
-    console.log("[auth.requestPhoneCode] POST /v1/auth/phone/request_code");
-
     const res = await postJson("/v1/auth/phone/request_code", {
       phone: e164,
     });
 
-    console.log("[auth.requestPhoneCode] raw response", res);
-
     const json = safeJson(res?.json);
-
-    console.log("[auth.requestPhoneCode] parsed json", json);
 
     if (!res?.ok) {
       const errorMessage = buildErrorMessage(
@@ -169,9 +147,9 @@ export async function requestPhoneCode(
         "Could not send verification code"
       );
 
-      console.log("[auth.requestPhoneCode] request failed", {
+      console.log("[auth.requestPhoneCode] failed", {
+        status: res?.status,
         errorMessage,
-        json,
       });
 
       return {
@@ -179,6 +157,11 @@ export async function requestPhoneCode(
         error: errorMessage,
       };
     }
+
+    console.log("[auth.requestPhoneCode] sent", {
+      status: res?.status,
+      maskedPhone: json?.masked_phone || json?.maskedPhone,
+    });
 
     return {
       ok: true,
@@ -189,8 +172,8 @@ export async function requestPhoneCode(
           typeof json?.cooldown === "number"
             ? json.cooldown
             : typeof json?.resend_cooldown === "number"
-            ? json.resend_cooldown
-            : undefined,
+              ? json.resend_cooldown
+              : undefined,
       },
     };
   } catch (error) {
@@ -211,46 +194,31 @@ export async function verifyPhoneCode(
     verificationToken?: string;
   }>
 > {
-  console.log("[auth.verifyPhoneCode] raw input", { phone, code });
-
   const e164 = toE164Us(phone);
   const cleanCode = String(code || "").replace(/\D/g, "").slice(0, 6);
 
-  console.log("[auth.verifyPhoneCode] normalized", {
-    e164,
-    cleanCode,
-  });
-
   if (!e164) {
-    console.log("[auth.verifyPhoneCode] blocked before request - invalid phone");
     return { ok: false, error: "Invalid phone number" };
   }
 
   if (cleanCode.length !== 6) {
-    console.log("[auth.verifyPhoneCode] blocked before request - invalid code length");
     return { ok: false, error: "Enter the 6-digit code" };
   }
 
   try {
-    console.log("[auth.verifyPhoneCode] POST /v1/auth/phone/verify_code");
-
     const res = await postJson("/v1/auth/phone/verify_code", {
       phone: e164,
       code: cleanCode,
     });
 
-    console.log("[auth.verifyPhoneCode] raw response", res);
-
     const json = safeJson(res?.json);
-
-    console.log("[auth.verifyPhoneCode] parsed json", json);
 
     if (!res?.ok) {
       const errorMessage = buildErrorMessage(json, "Invalid or expired code");
 
-      console.log("[auth.verifyPhoneCode] request failed", {
+      console.log("[auth.verifyPhoneCode] failed", {
+        status: res?.status,
         errorMessage,
-        json,
       });
 
       return {
@@ -263,16 +231,19 @@ export async function verifyPhoneCode(
       json?.verification_token || json?.verificationToken || "";
 
     if (!verificationToken) {
-      console.log(
-        "[auth.verifyPhoneCode] verification token missing from successful response",
-        json
-      );
+      console.log("[auth.verifyPhoneCode] missing verification token", {
+        status: res?.status,
+      });
 
       return {
         ok: false,
         error: "Verification succeeded, but no verification token was returned",
       };
     }
+
+    console.log("[auth.verifyPhoneCode] verified", {
+      status: res?.status,
+    });
 
     return {
       ok: true,
@@ -305,14 +276,9 @@ export async function completeSignUp(params: {
     refreshToken?: string;
   }>
 > {
-  console.log("[auth.completeSignUp] raw params", params);
-
   const e164 = toE164Us(params.phone);
 
-  console.log("[auth.completeSignUp] normalized phone", e164);
-
   if (!e164) {
-    console.log("[auth.completeSignUp] blocked before request - invalid phone");
     return { ok: false, error: "Invalid phone number" };
   }
 
@@ -328,23 +294,16 @@ export async function completeSignUp(params: {
     },
   };
 
-  console.log("[auth.completeSignUp] POST /v1/auth/signup payload", payload);
-
   try {
     const res = await postJson("/v1/auth/signup", payload);
-
-    console.log("[auth.completeSignUp] raw response", res);
-
     const json = safeJson(res?.json);
-
-    console.log("[auth.completeSignUp] parsed json", json);
 
     if (!res?.ok) {
       const errorMessage = buildErrorMessage(json, "Signup failed");
 
-      console.log("[auth.completeSignUp] signup failed", {
+      console.log("[auth.completeSignUp] failed", {
+        status: res?.status,
         errorMessage,
-        json,
       });
 
       return {
@@ -352,6 +311,13 @@ export async function completeSignUp(params: {
         error: errorMessage,
       };
     }
+
+    console.log("[auth.completeSignUp] success", {
+      status: res?.status,
+      userId: json?.user?.id,
+      supportSubscriptionActive: !!json?.user?.support_subscription_active,
+      phoneVerified: !!json?.user?.phone_verified_at,
+    });
 
     return {
       ok: true,
@@ -427,8 +393,8 @@ export async function changePassword(params: {
       const errorMessage = buildErrorMessage(json, "Could not change password");
 
       console.log("[auth.changePassword] failed", {
+        status: res?.status,
         errorMessage,
-        json,
       });
 
       return {
@@ -436,6 +402,10 @@ export async function changePassword(params: {
         error: errorMessage,
       };
     }
+
+    console.log("[auth.changePassword] success", {
+      status: res?.status,
+    });
 
     return {
       ok: true,

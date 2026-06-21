@@ -13,6 +13,8 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  AppState,
+  AppStateStatus,
   Easing,
   Image,
   Platform,
@@ -50,6 +52,11 @@ const BRAND = {
 
 const LOGO_URI =
   "https://res.cloudinary.com/djtsuktwb/image/upload/v1769703507/ChatGPT_Image_Jan_29_2026_08_00_07_AM_1_3_gtqeo8.jpg";
+
+type PremiumSnapshot = {
+  premiumDetected: boolean;
+  activeKeys: string[];
+};
 
 function AnimatedHint() {
   const sheenX = useRef(new Animated.Value(-140)).current;
@@ -435,6 +442,8 @@ export default function PublicAskMomLanding() {
   const { width } = useWindowDimensions();
   const isNarrow = width < 380;
 
+  const appStateRef = useRef<AppStateStatus>(AppState.currentState);
+
   const [premiumChecking, setPremiumChecking] = useState(true);
   const [restoreLoading, setRestoreLoading] = useState(false);
   const [hasPremiumAccess, setHasPremiumAccess] = useState(false);
@@ -449,38 +458,32 @@ export default function PublicAskMomLanding() {
   const footerPaddingBottom = Math.max(insets.bottom, 10) + 10;
   const footerTotalHeight = FOOTER_MIN_HEIGHT + footerPaddingBottom;
 
-  const refreshPremiumState = useCallback(async (source: string) => {
-    try {
-      console.log("💳 [PublicLanding] refresh premium state started:", source);
+  const refreshPremiumState = useCallback(
+    async (_source: string): Promise<PremiumSnapshot> => {
+      try {
+        setPremiumChecking(true);
 
-      setPremiumChecking(true);
+        const info = await getCustomerInfo();
+        const activeKeys = Object.keys(info?.entitlements?.active ?? {});
+        const entitlementPro = isProActive(info);
+        const anyActiveEntitlement = activeKeys.length > 0;
+        const premiumDetected = entitlementPro || anyActiveEntitlement;
 
-      const info = await getCustomerInfo();
-      const activeKeys = Object.keys(info?.entitlements?.active ?? {});
-      const entitlementPro = isProActive(info);
-      const anyActiveEntitlement = activeKeys.length > 0;
-      const premiumDetected = entitlementPro || anyActiveEntitlement;
+        setActiveEntitlementKeys(activeKeys);
+        setHasPremiumAccess(premiumDetected);
 
-      console.log("💳 [PublicLanding] CustomerInfo:", {
-        source,
-        originalAppUserId: info?.originalAppUserId,
-        activeKeys,
-        entitlementPro,
-        anyActiveEntitlement,
-        premiumDetected,
-      });
+        return { premiumDetected, activeKeys };
+      } catch {
+        setActiveEntitlementKeys([]);
+        setHasPremiumAccess(false);
 
-      setActiveEntitlementKeys(activeKeys);
-      setHasPremiumAccess(premiumDetected);
-    } catch (error) {
-      console.log("💳 [PublicLanding] premium state failed:", source, error);
-
-      setActiveEntitlementKeys([]);
-      setHasPremiumAccess(false);
-    } finally {
-      setPremiumChecking(false);
-    }
-  }, []);
+        return { premiumDetected: false, activeKeys: [] };
+      } finally {
+        setPremiumChecking(false);
+      }
+    },
+    []
+  );
 
   useEffect(() => {
     refreshPremiumState("mount");
@@ -491,6 +494,24 @@ export default function PublicAskMomLanding() {
       refreshPremiumState("focus");
     }, [refreshPremiumState])
   );
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (nextAppState) => {
+      const previousAppState = appStateRef.current;
+      const returningToApp =
+        previousAppState.match(/inactive|background/) && nextAppState === "active";
+
+      appStateRef.current = nextAppState;
+
+      if (returningToApp) {
+        refreshPremiumState("app-active");
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [refreshPremiumState]);
 
   const goToSignIn = () => {
     router.push("/(auth)/sign-in" as any);
@@ -514,7 +535,6 @@ export default function PublicAskMomLanding() {
     if (restoreLoading) return;
 
     try {
-      console.log("💳 [PublicLanding] restore purchases started");
       setRestoreLoading(true);
       setPremiumChecking(true);
 
@@ -523,14 +543,6 @@ export default function PublicAskMomLanding() {
       const entitlementPro = isProActive(info);
       const anyActiveEntitlement = activeKeys.length > 0;
       const premiumDetected = entitlementPro || anyActiveEntitlement;
-
-      console.log("💳 [PublicLanding] restore purchases result:", {
-        originalAppUserId: info?.originalAppUserId,
-        activeKeys,
-        entitlementPro,
-        anyActiveEntitlement,
-        premiumDetected,
-      });
 
       setActiveEntitlementKeys(activeKeys);
       setHasPremiumAccess(premiumDetected);
@@ -551,8 +563,6 @@ export default function PublicAskMomLanding() {
         );
       }
     } catch (error: any) {
-      console.log("💳 [PublicLanding] restore purchases failed:", error);
-
       const message = String(
         error?.message || "We couldn’t restore purchases right now. Please try again."
       );
@@ -564,24 +574,10 @@ export default function PublicAskMomLanding() {
     }
   };
 
-  const handlePremiumFeaturePress = (featureName: string) => {
-    console.log("💳 [PublicLanding] premium feature pressed:", {
-      featureName,
-      premiumChecking,
-      hasPremiumAccess,
-      activeEntitlementKeys,
-    });
+  const handlePremiumFeaturePress = async (featureName: string) => {
+    const snapshot = await refreshPremiumState(`press:${featureName}`);
 
-    if (premiumChecking) {
-      Alert.alert(
-        "Checking subscription",
-        "Give us one second to confirm your subscription status."
-      );
-      refreshPremiumState(`press:${featureName}`);
-      return;
-    }
-
-    if (hasPremiumAccess) {
+    if (snapshot.premiumDetected) {
       Alert.alert(
         "Account setup needed",
         "Premium is active. Create an account to use Text Mom and Call Mom so support can connect this subscription to you.",
@@ -611,14 +607,6 @@ export default function PublicAskMomLanding() {
 
   const showPremiumLocks = !premiumChecking && !hasPremiumAccess;
   const showAccountSetupLocks = !premiumChecking && hasPremiumAccess;
-
-  console.log("💳 [PublicLanding] visual decision:", {
-    premiumChecking,
-    hasPremiumAccess,
-    activeEntitlementKeys,
-    showPremiumLocks,
-    showAccountSetupLocks,
-  });
 
   return (
     <SafeAreaView style={styles.page} edges={["top", "left", "right"]}>

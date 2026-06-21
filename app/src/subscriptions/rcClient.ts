@@ -7,73 +7,14 @@ import { getRevenueCatApiKey } from "./rcKeys";
 
 let configured = false;
 let configuredAppUserId: string | null = null;
-let rcLogHandlerInstalled = false;
-
-export const RC_PENDING_ANONYMOUS_APP_USER_ID_KEY =
-  "momscomputer:rc_pending_anonymous_app_user_id";
-
-/* ======================================================
-   REVENUECAT LOGGING
-   ====================================================== */
 
 /**
- * RevenueCat can sometimes surface noisy Google Play Billing sandbox/store
- * messages through console.error. In Expo dev, that becomes the ugly bottom
- * LogBox/debugger error.
- *
- * We only suppress the known "OK BillingResult with null purchases" noise.
- * Real RevenueCat errors still get logged.
+ * IMPORTANT:
+ * Expo SecureStore keys may only contain alphanumeric characters, ".", "-", and "_".
+ * Do NOT use ":" here.
  */
-function installRevenueCatLogHandler() {
-  if (rcLogHandlerInstalled) return;
-  rcLogHandlerInstalled = true;
-
-  try {
-    const anyPurchases = Purchases as any;
-
-    if (typeof anyPurchases.setLogHandler !== "function") {
-      return;
-    }
-
-    anyPurchases.setLogHandler((logLevel: any, message: string) => {
-      const msg = String(message || "");
-
-      const isKnownGoogleBillingNoise =
-        msg.includes(
-          "onPurchasesUpdated received an OK BillingResult with a Null purchases list"
-        ) ||
-        msg.includes("BillingWrapper purchases failed to update") ||
-        msg.includes("No purchases received") ||
-        msg.includes("No purchases received");
-
-      if (isKnownGoogleBillingNoise) {
-        console.log("[RevenueCat ignored Google Billing store noise]", msg);
-        return;
-      }
-
-      const normalizedLevel = String(logLevel || "").toLowerCase();
-
-      /**
-       * Important:
-       * Do not use console.error here. Expo dev LogBox turns console.error
-       * into the nasty on-screen debugger-style error.
-       */
-      if (normalizedLevel.includes("error")) {
-        console.warn("[RevenueCat]", msg);
-        return;
-      }
-
-      if (normalizedLevel.includes("warn")) {
-        console.warn("[RevenueCat]", msg);
-        return;
-      }
-
-      console.log("[RevenueCat]", msg);
-    });
-  } catch (e) {
-    console.log("RevenueCat log handler setup skipped:", e);
-  }
-}
+export const RC_PENDING_ANONYMOUS_APP_USER_ID_KEY =
+  "momscomputer.rc_pending_anonymous_app_user_id";
 
 /* ======================================================
    AUTH / USER HELPERS
@@ -90,7 +31,7 @@ async function getStoredAuthUserId(): Promise<string | null> {
     if (id == null) return null;
     return String(id);
   } catch (e) {
-    console.log("RC getStoredAuthUserId failed:", e);
+    console.log("[RC_FLOW] getStoredAuthUserId failed:", e);
     return null;
   }
 }
@@ -103,16 +44,21 @@ async function rememberAnonymousAppUserId(id: string | null | undefined) {
   if (!isRcAnonymousId(id)) return;
 
   try {
-    await SecureStore.setItemAsync(RC_PENDING_ANONYMOUS_APP_USER_ID_KEY, String(id));
-    console.log("RC remembered anonymous appUserID:", id);
+    await SecureStore.setItemAsync(
+      RC_PENDING_ANONYMOUS_APP_USER_ID_KEY,
+      String(id)
+    );
   } catch (e) {
-    console.log("RC rememberAnonymousAppUserId failed:", e);
+    console.log("[RC_FLOW] rememberAnonymousAppUserId failed:", e);
   }
 }
 
 export async function getPendingAnonymousAppUserId(): Promise<string | null> {
   try {
-    const id = await SecureStore.getItemAsync(RC_PENDING_ANONYMOUS_APP_USER_ID_KEY);
+    const id = await SecureStore.getItemAsync(
+      RC_PENDING_ANONYMOUS_APP_USER_ID_KEY
+    );
+
     return isRcAnonymousId(id) ? id : null;
   } catch {
     return null;
@@ -122,7 +68,9 @@ export async function getPendingAnonymousAppUserId(): Promise<string | null> {
 export async function clearPendingAnonymousAppUserId(): Promise<void> {
   try {
     await SecureStore.deleteItemAsync(RC_PENDING_ANONYMOUS_APP_USER_ID_KEY);
-  } catch {}
+  } catch {
+    // ignore
+  }
 }
 
 /* ======================================================
@@ -133,27 +81,23 @@ export async function configureRevenueCat(): Promise<boolean> {
   const apiKey = getRevenueCatApiKey();
 
   if (!apiKey) {
-    console.log("RC configure skipped: missing API key");
+    console.log("[RC_FLOW] configure skipped: missing API key");
     return false;
   }
-
-  installRevenueCatLogHandler();
 
   if (configured) {
     try {
       const current = await getCurrentAppUserId();
       await rememberAnonymousAppUserId(current);
-    } catch {}
+    } catch {
+      // ignore
+    }
 
     return true;
   }
 
   try {
-    /**
-     * VERBOSE is helpful during local Android sandbox testing,
-     * but keep production less noisy.
-     */
-    Purchases.setLogLevel(__DEV__ ? LOG_LEVEL.VERBOSE : LOG_LEVEL.WARN);
+    Purchases.setLogLevel(LOG_LEVEL.WARN);
 
     const storedUserId = await getStoredAuthUserId();
 
@@ -166,13 +110,14 @@ export async function configureRevenueCat(): Promise<boolean> {
       configured = true;
       configuredAppUserId = storedUserId;
 
-      console.log("RC configured with real appUserID:", storedUserId);
+      console.log("[RC_FLOW] configured_real_user", {
+        appUserId: storedUserId,
+      });
+
       return true;
     }
 
-    // IMPORTANT:
     // Logged-out users must be allowed to subscribe for Apple review.
-    // No appUserID here means RevenueCat creates a $RCAnonymousID customer.
     Purchases.configure({
       apiKey,
     });
@@ -183,10 +128,13 @@ export async function configureRevenueCat(): Promise<boolean> {
     configuredAppUserId = current;
     await rememberAnonymousAppUserId(current);
 
-    console.log("RC configured anonymously:", current);
+    console.log("[RC_FLOW] configured_anonymous", {
+      appUserId: current,
+    });
+
     return true;
   } catch (e) {
-    console.log("RC configure failed:", e);
+    console.log("[RC_FLOW] configure failed:", e);
     return false;
   }
 }
@@ -209,12 +157,6 @@ export async function getCustomerInfo(): Promise<CustomerInfo> {
 
   const info = await Purchases.getCustomerInfo();
 
-  console.log(
-    "RC getCustomerInfo ->",
-    info?.originalAppUserId,
-    Object.keys(info?.entitlements?.active ?? {})
-  );
-
   await rememberAnonymousAppUserId(info?.originalAppUserId);
 
   return info;
@@ -228,6 +170,7 @@ export async function getCurrentAppUserId(): Promise<string | null> {
   try {
     const maybe = (Purchases as any).getAppUserID?.();
     const id = typeof maybe?.then === "function" ? await maybe : maybe;
+
     return id ? String(id) : null;
   } catch {
     return null;
@@ -241,6 +184,7 @@ export async function isAnonymousUser(): Promise<boolean | null> {
 
     const maybe = fn();
     const val = typeof maybe?.then === "function" ? await maybe : maybe;
+
     return typeof val === "boolean" ? val : null;
   } catch {
     return null;
@@ -264,14 +208,11 @@ export async function rcIdentifyUser(
     const next = String(appUserId);
     const current = await getCurrentAppUserId();
 
-    console.log("RC identify attempt:", { current, next });
-
     if (isRcAnonymousId(current)) {
       await rememberAnonymousAppUserId(current);
     }
 
     if (current === next) {
-      console.log("RC already identified as:", next);
       return await Purchases.getCustomerInfo();
     }
 
@@ -280,15 +221,16 @@ export async function rcIdentifyUser(
 
     configuredAppUserId = next;
 
-    console.log(
-      "RC logIn success ->",
-      info?.originalAppUserId,
-      Object.keys(info?.entitlements?.active ?? {})
-    );
+    console.log("[RC_FLOW] login_success", {
+      appUserId: next,
+      originalAppUserId: info?.originalAppUserId,
+      activeKeys: Object.keys(info?.entitlements?.active ?? {}),
+      entitlementIdMatched: isProActive(info),
+    });
 
     return info;
   } catch (e) {
-    console.log("rcIdentifyUser failed:", e);
+    console.log("[RC_FLOW] identify failed:", e);
     return null;
   }
 }
@@ -310,7 +252,6 @@ export async function rcLogoutUser(): Promise<void> {
     if (anonymous === true) {
       const current = await getCurrentAppUserId();
       await rememberAnonymousAppUserId(current);
-      console.log("RC logout skipped: already anonymous", current);
       return;
     }
 
@@ -320,13 +261,14 @@ export async function rcLogoutUser(): Promise<void> {
     configuredAppUserId = current;
     await rememberAnonymousAppUserId(current);
 
-    console.log(
-      "RC logged out to anonymous ->",
-      current,
-      Object.keys(info?.entitlements?.active ?? {})
-    );
+    console.log("[RC_FLOW] logged_out_to_anonymous", {
+      appUserId: current,
+      originalAppUserId: info?.originalAppUserId,
+      activeKeys: Object.keys(info?.entitlements?.active ?? {}),
+      entitlementIdMatched: isProActive(info),
+    });
   } catch (e) {
-    console.log("RC logout failed:", e);
+    console.log("[RC_FLOW] logout failed:", e);
   }
 }
 
@@ -343,11 +285,11 @@ export async function restorePurchases(): Promise<CustomerInfo> {
 
   const info = await Purchases.restorePurchases();
 
-  console.log(
-    "RC restorePurchases ->",
-    info?.originalAppUserId,
-    Object.keys(info?.entitlements?.active ?? {})
-  );
+  console.log("[RC_FLOW] restore_purchases", {
+    originalAppUserId: info?.originalAppUserId,
+    activeKeys: Object.keys(info?.entitlements?.active ?? {}),
+    entitlementIdMatched: isProActive(info),
+  });
 
   await rememberAnonymousAppUserId(info?.originalAppUserId);
 

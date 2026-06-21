@@ -35,11 +35,12 @@ export async function linkRevenueCatCustomerAfterAuth(
       const authToken = await SecureStore.getItemAsync("auth_token");
 
       if (!authToken) {
-        console.log(
-          "Skipping RC link_customer because auth_token was not found."
-        );
+        console.log("[RC_LINK] skipped_missing_auth_token");
       } else {
-        console.log("Linking pending RC anonymous customer:", anonymousAppUserId);
+        console.log("[RC_LINK] linking_pending_anonymous_customer", {
+          anonymousAppUserId,
+          realUserId,
+        });
 
         const { ok, status, json } = await postJson(
           "/v1/revenuecat/link_customer",
@@ -49,20 +50,43 @@ export async function linkRevenueCatCustomerAfterAuth(
           authToken
         );
 
-        console.log("RC link_customer result:", { ok, status, json });
+        const linked = !!json?.linked;
+        const replayed = !!json?.replayed_revenuecat_event;
+        const subscriptionActive = !!json?.subscription_active;
+        const withoutExistingWebhook = !!json?.link_created_without_existing_webhook;
 
-        if (ok) {
+        console.log("[RC_LINK] result", {
+          ok,
+          status,
+          linked,
+          replayed,
+          subscriptionActive,
+          withoutExistingWebhook,
+        });
+
+        /**
+         * Do NOT clear the pending anonymous ID just because Rails accepted the link.
+         *
+         * If Rails says:
+         * linked=true, replayed=false, subscription_active=false,
+         * then we still need this anonymous ID available for a later retry/fallback.
+         */
+        if (ok && linked && (subscriptionActive || replayed)) {
           await clearPendingAnonymousAppUserId();
+
+          console.log("[RC_LINK] cleared_pending_anonymous_customer", {
+            anonymousAppUserId,
+          });
         }
       }
     } catch (e) {
-      console.log("RC link_customer failed:", e);
+      console.log("[RC_LINK] failed", e);
     }
   }
 
   try {
     await rcIdentifyUser(realUserId);
   } catch (e) {
-    console.log("RC identify after backend auth failed:", e);
+    console.log("[RC_LINK] identify_after_backend_auth_failed", e);
   }
 }

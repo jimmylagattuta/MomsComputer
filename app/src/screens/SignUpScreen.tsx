@@ -711,20 +711,23 @@ export default function SignUpScreen() {
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 8 : 0}
       >
-        <View
-          style={[
-            styles.logoBannerFullBleed,
-            {
-              paddingTop:
-                Math.max(insets.top, 10) + (Platform.OS === "android" ? 8 : 0),
-              paddingBottom: LOGO_BOTTOM_GAP,
-            },
-          ]}
-          pointerEvents="none"
-        >
-          <Image source={{ uri: LOGO_URI }} style={styles.logoFullBleed} />
-        </View>
+        {!(Platform.OS === "android" && keyboardOpen) && (
+          <View
+            style={[
+              styles.logoBannerFullBleed,
+              {
+                paddingTop:
+                  Math.max(insets.top, 10) + (Platform.OS === "android" ? 8 : 0),
+                paddingBottom: LOGO_BOTTOM_GAP,
+              },
+            ]}
+            pointerEvents="none"
+          >
+            <Image source={{ uri: LOGO_URI }} style={styles.logoFullBleed} />
+          </View>
+        )}
 
         <View
           style={[
@@ -734,8 +737,12 @@ export default function SignUpScreen() {
         >
           <ScrollView
             style={{ flex: 1 }}
-            contentContainerStyle={styles.scrollContent}
+            contentContainerStyle={[
+              styles.scrollContent,
+              keyboardOpen ? styles.scrollContentKeyboardOpen : null,
+            ]}
             keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
             showsVerticalScrollIndicator={false}
           >
             <View style={styles.main}>
@@ -1082,6 +1089,7 @@ export default function SignUpScreen() {
                         }
                       }}
                       secureTextEntry={secure1}
+                      autoCapitalize="none"
                       placeholder="At least 8 characters"
                       placeholderTextColor="#b3b5b9a8"
                       style={styles.input}
@@ -1114,6 +1122,7 @@ export default function SignUpScreen() {
                         schedulePwHintCheck(t, 700);
                       }}
                       secureTextEntry={secure2}
+                      autoCapitalize="none"
                       placeholder="Re-type password"
                       placeholderTextColor="#b3b5b9a8"
                       style={styles.input}
@@ -1320,6 +1329,12 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     justifyContent: "center",
     paddingTop: 8,
+  },
+
+  scrollContentKeyboardOpen: {
+    justifyContent: "flex-start",
+    paddingTop: 12,
+    paddingBottom: 28,
   },
 
   main: { width: "100%" },

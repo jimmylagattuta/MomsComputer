@@ -1225,23 +1225,8 @@ export default function HomeScreen() {
           ? user.monthly_calls_limit
           : null;
 
-  console.log("📞 [CallUsage] raw auth object:", auth);
 
-  console.log("📞 [CallUsage] raw auth user:", user);
 
-  console.log("📞 [CallUsage] possible user call fields:", {
-    current_calls_this_month: user?.current_calls_this_month,
-    calls_this_month: user?.calls_this_month,
-    monthly_calls_used: user?.monthly_calls_used,
-    calls_used_this_month: user?.calls_used_this_month,
-
-    monthly_call_limit: user?.monthly_call_limit,
-    call_limit: user?.call_limit,
-    monthly_calls_limit: user?.monthly_calls_limit,
-
-    resolved_currentCallsThisMonth: currentCallsThisMonth,
-    resolved_monthlyCallLimit: monthlyCallLimit,
-  });
 
   const hookActiveEntitlementKeys = Object.keys(
     sub?.customerInfo?.entitlements?.active ?? {}
@@ -1292,32 +1277,6 @@ export default function HomeScreen() {
     hasPremiumAccess &&
     !hasAccount;
 
-  console.log("💳 [PremiumGate]", {
-    email: normalizedUserEmail,
-    hasAccount,
-    hasInstantEmailAccess,
-    isAdmin,
-    isPro,
-    hookActiveEntitlementKeys,
-    hookHasActiveEntitlements,
-    homeRcIsPro,
-    homeRcSeenPremium,
-    homeRcActiveEntitlementKeys,
-    hasHomeRcActiveEntitlements,
-    revenueCatPremiumDetected,
-    rcReady,
-    subLoading,
-    shouldShowSubscriptionChecking,
-    shouldShowPremiumLocks,
-    shouldShowAccountSetupLocks,
-    backendPremium,
-    hasPremiumAccess,
-    support_subscription_active: user?.support_subscription_active,
-    supportSubscriptionActive: user?.supportSubscriptionActive,
-    is_subscriber: user?.is_subscriber,
-    subscriber: user?.subscriber,
-    premium: user?.premium,
-  });
 
   const [textMomUnreadCount, setTextMomUnreadCount] = useState(0);
 
@@ -1328,7 +1287,6 @@ export default function HomeScreen() {
       const seen = await readHomeRcSeenPremium();
 
       if (!cancelled) {
-        console.log("💳 [PremiumGate] loaded persisted Home RC premium flag:", seen);
         setHomeRcSeenPremium(seen);
       }
     })();
@@ -1339,29 +1297,13 @@ export default function HomeScreen() {
   }, []);
 
   useEffect(() => {
-    console.log("🏠 [HomeBadge] mounted");
-    console.log("🏠 [HomeBadge] initial user:", user);
-    console.log("🏠 [HomeBadge] initial currentUserId:", currentUserId);
-    console.log("🏠 [HomeBadge] initial isLoggingOut:", isLoggingOut);
 
     return () => {
-      console.log("🏠 [HomeBadge] unmounted");
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    console.log("🏠 [HomeBadge] auth/user state changed:", {
-      currentUserId,
-      hasAccount,
-      userId: user?.id,
-      role: user?.role,
-      isAdmin,
-      backendPremium,
-      isLoggingOut,
-      currentCallsThisMonth,
-      monthlyCallLimit,
-    });
   }, [
     currentUserId,
     hasAccount,
@@ -1375,7 +1317,6 @@ export default function HomeScreen() {
   ]);
 
   useEffect(() => {
-    console.log("🏠 [HomeBadge] textMomUnreadCount changed:", textMomUnreadCount);
   }, [textMomUnreadCount]);
 
   useEffect(() => {
@@ -1398,11 +1339,6 @@ export default function HomeScreen() {
           const activeKeys = Object.keys(info?.entitlements?.active ?? {});
           const homePremium = homeHasPremiumEntitlement(info);
 
-          console.log("💳 [PremiumGate] mount anonymous CustomerInfo", {
-            originalAppUserId: info?.originalAppUserId,
-            activeKeys,
-            homePremium,
-          });
 
           if (!cancelled) {
             const premiumFromKeys = activeKeys.length > 0 || homePremium;
@@ -1432,12 +1368,6 @@ export default function HomeScreen() {
         const activeKeys = Object.keys(info?.entitlements?.active ?? {});
         const homePremium = homeHasPremiumEntitlement(info);
 
-        console.log("💳 [PremiumGate] mount signed-in CustomerInfo", {
-          userId: user?.id,
-          originalAppUserId: info?.originalAppUserId,
-          activeKeys,
-          homePremium,
-        });
 
         if (!cancelled) {
           const premiumFromKeys = activeKeys.length > 0 || homePremium;
@@ -1448,7 +1378,6 @@ export default function HomeScreen() {
           setRcReady(true);
         }
       } catch (error) {
-        console.log("💳 [PremiumGate] mount subscription refresh failed:", error);
         if (!cancelled) setRcReady(true);
       }
     })();
@@ -1493,14 +1422,6 @@ export default function HomeScreen() {
           const activeKeys = Object.keys(info?.entitlements?.active ?? {});
           const homePremium = homeHasPremiumEntitlement(info);
 
-          console.log("💳 [PremiumGate] focus CustomerInfo", {
-            userId: user?.id ?? null,
-            hasAccount,
-            originalAppUserId: info?.originalAppUserId,
-            activeKeys,
-            entitlementIdMatched: isProActive(info),
-            homePremium,
-          });
 
           if (active) {
             const premiumFromKeys = activeKeys.length > 0 || homePremium;
@@ -1511,7 +1432,6 @@ export default function HomeScreen() {
             setRcReady(true);
           }
         } catch (error) {
-          console.log("💳 [PremiumGate] focus subscription refresh failed:", error);
 
           if (active) {
             setRcReady(true);
@@ -1627,13 +1547,11 @@ export default function HomeScreen() {
       try {
         const token = await getAuthToken();
         if (!token) {
-          console.log("No auth token found; skipping push token sync.");
           return;
         }
 
         const pushToken = await registerForPushNotificationsAsync();
         if (!pushToken) {
-          console.log("No push token returned.");
           return;
         }
 
@@ -1659,15 +1577,12 @@ export default function HomeScreen() {
 
         if (!cancelled) {
           if (res.ok) {
-            console.log("✅ Push token synced to backend", res.json);
             setPushSyncUserId(currentUserId);
           } else {
-            console.log("❌ Failed to sync push token", res.status, res.json);
           }
         }
       } catch (error) {
         if (!cancelled) {
-          console.log("❌ Push token sync error", error);
         }
       }
     };
@@ -1682,26 +1597,20 @@ export default function HomeScreen() {
   useEffect(() => {
     let mounted = true;
 
-    console.log("🏠 [HomeBadge] local badge subscription effect started");
 
     getTextMomUnreadCount().then((count) => {
-      console.log("🏠 [HomeBadge] getTextMomUnreadCount resolved:", count);
 
       if (mounted) {
-        console.log("🏠 [HomeBadge] setting local stored count into state:", count);
         setTextMomUnreadCount(count);
       } else {
-        console.log("🏠 [HomeBadge] skipped stored count because unmounted:", count);
       }
     });
 
     const unsubscribe = subscribeToTextMomUnreadCount((count) => {
-      console.log("🏠 [HomeBadge] subscription listener received count:", count);
       setTextMomUnreadCount(count);
     });
 
     return () => {
-      console.log("🏠 [HomeBadge] local badge subscription effect cleanup");
       mounted = false;
       unsubscribe();
     };
@@ -1711,40 +1620,26 @@ export default function HomeScreen() {
     React.useCallback(() => {
       let active = true;
 
-      console.log("🏠 [HomeBadge] useFocusEffect fired");
-      console.log("🏠 [HomeBadge] focus currentUserId:", currentUserId);
-      console.log("🏠 [HomeBadge] focus isLoggingOut:", isLoggingOut);
 
       if (!currentUserId || isLoggingOut) {
-        console.log("⚠️ [HomeBadge] focus skipped refresh; clearing badge", {
-          currentUserId,
-          isLoggingOut,
-        });
 
         setTextMomUnreadCount(0);
 
         return () => {
-          console.log("🏠 [HomeBadge] focus cleanup after skipped refresh");
           active = false;
         };
       }
 
-      console.log("🏠 [HomeBadge] calling refreshTextMomUnreadCountFromServer");
 
       refreshTextMomUnreadCountFromServer().then((count) => {
-        console.log("🏠 [HomeBadge] refresh promise resolved count:", count);
-        console.log("🏠 [HomeBadge] focus still active:", active);
 
         if (active) {
-          console.log("🏠 [HomeBadge] setting refreshed count into state:", count);
           setTextMomUnreadCount(count);
         } else {
-          console.log("⚠️ [HomeBadge] skipped refreshed count because focus inactive:", count);
         }
       });
 
       return () => {
-        console.log("🏠 [HomeBadge] useFocusEffect cleanup");
         active = false;
       };
     }, [currentUserId, isLoggingOut])
@@ -1975,37 +1870,8 @@ export default function HomeScreen() {
   const footerPaddingBottom = Math.max(insets.bottom, 10) + 10;
   const footerTotalHeight = FOOTER_MIN_HEIGHT + footerPaddingBottom;
 
-  console.log("🏠 [HomeBadge] render:", {
-    currentUserId,
-    hasAccount,
-    isLoggingOut,
-    textMomUnreadCount,
-    willShowBadge: textMomUnreadCount > 0,
-    currentCallsThisMonth,
-    monthlyCallLimit,
-  });
 
-  console.log("📞 [CallUsage] passing to HomeSettingsMenu:", {
-    currentCallsThisMonth,
-    monthlyCallLimit,
-  });
 
-  console.log("💳 [PremiumGate] visual decision", {
-    rcReady,
-    subLoading,
-    isPro,
-    hookActiveEntitlementKeys,
-    hookHasActiveEntitlements,
-    homeRcIsPro,
-    homeRcSeenPremium,
-    homeRcActiveEntitlementKeys,
-    revenueCatPremiumDetected,
-    hasPremiumAccess,
-    hasAccount,
-    shouldShowSubscriptionChecking,
-    shouldShowPremiumLocks,
-    shouldShowAccountSetupLocks,
-  });
 
   return (
     <SafeAreaView style={styles.page} edges={["top", "left", "right"]}>
@@ -2033,8 +1899,17 @@ export default function HomeScreen() {
           />
         </View>
 
-        <View style={[styles.main, { paddingBottom: footerTotalHeight }]}>
-          <View style={[styles.row, styles.rowFullBleed]}>
+        <ScrollView
+          style={styles.mainScroll}
+          contentContainerStyle={[
+            styles.mainScrollContent,
+            { paddingBottom: footerTotalHeight },
+          ]}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          <View style={styles.main}>
+            <View style={[styles.row, styles.rowFullBleed]}>
             <View style={styles.bannerRow}>
               <View style={styles.logoBanner}>
                 <Image source={{ uri: LOGO_URI }} style={styles.logo} resizeMode="cover" />
@@ -2178,51 +2053,47 @@ export default function HomeScreen() {
                 </View>
               </Pressable>
 
-              <View style={styles.premiumInfoCard}>
-                <View style={styles.premiumInfoHeader}>
-                  <View style={styles.premiumInfoIcon}>
-                    <Ionicons name="heart" size={15} color={BRAND.blue} />
+              {!hasPremiumAccess && (
+                <View style={styles.premiumInfoCard}>
+                  <View style={styles.premiumInfoHeader}>
+                    <View style={styles.premiumInfoIcon}>
+                      <Ionicons name="diamond-outline" size={15} color={BRAND.blue} />
+                    </View>
+
+                    <Text style={styles.premiumInfoTitle}>Premium support</Text>
                   </View>
 
-                  <Text style={styles.premiumInfoTitle}>Ask Mom is free</Text>
-                </View>
-
-                <Text style={styles.premiumInfoBody}>
-                  Use Ask Mom anytime. Premium unlocks Text Mom and Call Mom, and you can subscribe before creating an account.
-                </Text>
-
-                <Pressable
-                  onPress={handleOpenPremium}
-                  disabled={isLoggingOut}
-                  style={({ pressed }) => [
-                    styles.premiumInfoButton,
-                    hasPremiumAccess && styles.premiumInfoButtonActive,
-                    pressed && !isLoggingOut && styles.premiumInfoButtonPressed,
-                    isLoggingOut && styles.disabledBtn,
-                  ]}
-                >
-                  <Ionicons
-                    name={hasPremiumAccess ? "checkmark-circle" : "diamond-outline"}
-                    size={16}
-                    color={BRAND.goldDark}
-                  />
-
-                  <Text style={styles.premiumInfoButtonText}>
-                    {hasPremiumAccess ? "Premium Active" : "View Premium"}
+                  <Text style={styles.premiumInfoBody}>
+                    Premium unlocks Text Mom and Call Mom when you need extra help.
                   </Text>
-                </Pressable>
-              </View>
+
+                  <Pressable
+                    onPress={handleOpenPremium}
+                    disabled={isLoggingOut}
+                    style={({ pressed }) => [
+                      styles.premiumInfoButton,
+                      pressed && !isLoggingOut && styles.premiumInfoButtonPressed,
+                      isLoggingOut && styles.disabledBtn,
+                    ]}
+                  >
+                    <Ionicons name="diamond-outline" size={16} color={BRAND.goldDark} />
+
+                    <Text style={styles.premiumInfoButtonText}>View Premium</Text>
+                  </Pressable>
+                </View>
+              )}
             </View>
           </View>
 
-          {shouldShowSubscriptionChecking && (
-            <View style={{ marginTop: 10 }}>
-              <Text style={{ color: BRAND.muted, fontFamily: FONT.regular, fontSize: 12 }}>
-                Checking subscription…
-              </Text>
-            </View>
-          )}
-        </View>
+            {shouldShowSubscriptionChecking && (
+              <View style={{ marginTop: 10 }}>
+                <Text style={{ color: BRAND.muted, fontFamily: FONT.regular, fontSize: 12 }}>
+                  Checking subscription…
+                </Text>
+              </View>
+            )}
+          </View>
+        </ScrollView>
 
         <View
           style={[
@@ -2320,7 +2191,18 @@ const styles = StyleSheet.create({
     letterSpacing: 0.2,
   },
 
-  main: { flex: 1, justifyContent: "flex-start" },
+  mainScroll: {
+    flex: 1,
+  },
+
+  mainScrollContent: {
+    flexGrow: 1,
+  },
+
+  main: {
+    width: "100%",
+    justifyContent: "flex-start",
+  },
 
   row: { width: "100%", alignItems: "center" },
 

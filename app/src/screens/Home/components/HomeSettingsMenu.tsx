@@ -38,7 +38,7 @@ type HomeSettingsMenuProps = {
   open: boolean;
   disabled?: boolean;
 
-  // ✅ Current monthly call usage display
+  // Current monthly call usage display
   currentCallsThisMonth?: number | null;
   monthlyCallLimit?: number | null;
 
@@ -108,15 +108,6 @@ export default function HomeSettingsMenu({
   const callsUsedSubtext = hasCallUsageNumbers
     ? `${currentCallsThisMonth} of ${monthlyCallLimit} monthly calls used`
     : "Monthly phone support usage";
-
-  console.log("📞 [HomeSettingsMenu] received call usage props:", {
-    currentCallsThisMonth,
-    monthlyCallLimit,
-    hasCallUsageNumbers,
-    callsRemaining,
-    callsRemainingTitle,
-    callsUsedSubtext,
-  });
 
   return (
     <View style={styles.settingsWrap}>
