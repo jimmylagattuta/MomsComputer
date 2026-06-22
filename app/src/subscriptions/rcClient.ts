@@ -20,8 +20,26 @@ export const RC_PENDING_ANONYMOUS_APP_USER_ID_KEY =
    AUTH / USER HELPERS
    ====================================================== */
 
-async function getStoredAuthUserId(): Promise<string | null> {
+/**
+ * IMPORTANT:
+ * This is only used to determine whether the app currently has a saved auth session.
+ *
+ * We do NOT use this value to configure RevenueCat anymore.
+ *
+ * Old bug:
+ * - auth_user could be stale, like { id: 1 }
+ * - configureRevenueCat() passed appUserID: "1"
+ * - logged-out app became RevenueCat user "1"
+ *
+ * New rule:
+ * - configureRevenueCat() configures RevenueCat only
+ * - rcIdentifyUser(user.id) is the only place that identifies as a real backend user
+ */
+async function getStoredAuthSessionUserId(): Promise<string | null> {
   try {
+    const token = await SecureStore.getItemAsync("auth_token");
+    if (!token) return null;
+
     const raw = await SecureStore.getItemAsync("auth_user");
     if (!raw) return null;
 
@@ -29,9 +47,10 @@ async function getStoredAuthUserId(): Promise<string | null> {
     const id = parsed?.id;
 
     if (id == null) return null;
+
     return String(id);
   } catch (e) {
-    console.log("[RC_FLOW] getStoredAuthUserId failed:", e);
+    console.log("[RC_FLOW] getStoredAuthSessionUserId failed:", e);
     return null;
   }
 }
@@ -40,23 +59,47 @@ function isRcAnonymousId(id: string | null | undefined): boolean {
   return typeof id === "string" && id.startsWith("$RCAnonymousID:");
 }
 
-async function rememberAnonymousAppUserId(id: string | null | undefined) {
-  if (!isRcAnonymousId(id)) return;
+function isRealRevenueCatId(id: string | null | undefined): boolean {
+  const value = String(id || "").trim();
+  return !!value && !isRcAnonymousId(value);
+}
+
+/**
+ * Exported helper used by the guest RevenueCat attach flow.
+ *
+ * This stores the anonymous RevenueCat customer id BEFORE we log in to
+ * RevenueCat as the real Rails user id.
+ */
+export async function rememberPendingAnonymousAppUserId(
+  appUserId: string | null | undefined,
+): Promise<void> {
+  const value = String(appUserId || "").trim();
+
+  if (!isRcAnonymousId(value)) {
+    return;
+  }
 
   try {
-    await SecureStore.setItemAsync(
-      RC_PENDING_ANONYMOUS_APP_USER_ID_KEY,
-      String(id)
-    );
+    await SecureStore.setItemAsync(RC_PENDING_ANONYMOUS_APP_USER_ID_KEY, value);
+
+    console.log("[RC_FLOW] remembered_pending_anonymous_app_user_id", {
+      appUserId: value,
+    });
   } catch (e) {
-    console.log("[RC_FLOW] rememberAnonymousAppUserId failed:", e);
+    console.log("[RC_FLOW] remember_pending_anonymous_app_user_id_failed", e);
   }
+}
+
+async function rememberAnonymousAppUserId(
+  id: string | null | undefined,
+): Promise<void> {
+  await rememberPendingAnonymousAppUserId(id);
 }
 
 export async function getPendingAnonymousAppUserId(): Promise<string | null> {
   try {
     const id = await SecureStore.getItemAsync(
-      RC_PENDING_ANONYMOUS_APP_USER_ID_KEY
+      RC_PENDING_ANONYMOUS_APP_USER_ID_KEY,
     );
 
     return isRcAnonymousId(id) ? id : null;
@@ -77,6 +120,67 @@ export async function clearPendingAnonymousAppUserId(): Promise<void> {
    CONFIGURATION
    ====================================================== */
 
+async function ensureAnonymousIfNoAuthSession(reason: string): Promise<void> {
+  try {
+    const storedSessionUserId = await getStoredAuthSessionUserId();
+    const current = await getCurrentAppUserId();
+    const anonymous = await isAnonymousUser();
+
+    console.log("[RC_FLOW] logged_out_identity_guard", {
+      reason,
+      storedSessionUserId,
+      currentAppUserId: current,
+      isAnonymous: anonymous,
+    });
+
+    /**
+     * If the app has a real auth session, do not force logout here.
+     * rcIdentifyUser(user.id) will handle the real RevenueCat identity.
+     */
+    if (storedSessionUserId) {
+      return;
+    }
+
+    /**
+     * If there is no auth session but RevenueCat is currently on a real backend id
+     * like "1", "101", "102", force RevenueCat back to anonymous.
+     */
+    if (isRealRevenueCatId(current)) {
+      console.log("[RC_FLOW] forcing_anonymous_revenuecat_customer", {
+        reason,
+        currentAppUserId: current,
+      });
+
+      const info = await Purchases.logOut();
+      const freshCurrent = await getCurrentAppUserId();
+
+      configuredAppUserId = freshCurrent;
+
+      await rememberAnonymousAppUserId(freshCurrent);
+
+      console.log("[RC_FLOW] forced_anonymous_revenuecat_customer_done", {
+        reason,
+        previousAppUserId: current,
+        freshAppUserId: freshCurrent,
+        originalAppUserId: info?.originalAppUserId,
+        activeKeys: Object.keys(info?.entitlements?.active ?? {}),
+        entitlementIdMatched: isProActive(info),
+      });
+
+      return;
+    }
+
+    if (isRcAnonymousId(current)) {
+      await rememberAnonymousAppUserId(current);
+    }
+  } catch (e) {
+    console.log("[RC_FLOW] logged_out_identity_guard_failed", {
+      reason,
+      error: e,
+    });
+  }
+}
+
 export async function configureRevenueCat(): Promise<boolean> {
   const apiKey = getRevenueCatApiKey();
 
@@ -87,8 +191,14 @@ export async function configureRevenueCat(): Promise<boolean> {
 
   if (configured) {
     try {
+      await ensureAnonymousIfNoAuthSession("already_configured");
+
       const current = await getCurrentAppUserId();
-      await rememberAnonymousAppUserId(current);
+      configuredAppUserId = current;
+
+      if (isRcAnonymousId(current)) {
+        await rememberAnonymousAppUserId(current);
+      }
     } catch {
       // ignore
     }
@@ -99,37 +209,34 @@ export async function configureRevenueCat(): Promise<boolean> {
   try {
     Purchases.setLogLevel(LOG_LEVEL.WARN);
 
-    const storedUserId = await getStoredAuthUserId();
-
-    if (storedUserId) {
-      Purchases.configure({
-        apiKey,
-        appUserID: storedUserId,
-      });
-
-      configured = true;
-      configuredAppUserId = storedUserId;
-
-      console.log("[RC_FLOW] configured_real_user", {
-        appUserId: storedUserId,
-      });
-
-      return true;
-    }
-
-    // Logged-out users must be allowed to subscribe for Apple review.
+    /**
+     * IMPORTANT:
+     * Do NOT pass appUserID here.
+     *
+     * We used to read SecureStore auth_user and pass appUserID: storedUserId.
+     * That caused stale user "1" to leak into logged-out anonymous purchase flows.
+     *
+     * RevenueCat should configure anonymously by default.
+     * Only rcIdentifyUser(user.id) may call Purchases.logIn(realUserId).
+     */
     Purchases.configure({
       apiKey,
     });
 
     configured = true;
 
+    await ensureAnonymousIfNoAuthSession("fresh_configure");
+
     const current = await getCurrentAppUserId();
     configuredAppUserId = current;
-    await rememberAnonymousAppUserId(current);
 
-    console.log("[RC_FLOW] configured_anonymous", {
+    if (isRcAnonymousId(current)) {
+      await rememberAnonymousAppUserId(current);
+    }
+
+    console.log("[RC_FLOW] configured", {
       appUserId: current,
+      isAnonymousId: isRcAnonymousId(current),
     });
 
     return true;
@@ -157,7 +264,16 @@ export async function getCustomerInfo(): Promise<CustomerInfo> {
 
   const info = await Purchases.getCustomerInfo();
 
-  await rememberAnonymousAppUserId(info?.originalAppUserId);
+  const currentAppUserId = await getCurrentAppUserId();
+  const originalAppUserId = String(info?.originalAppUserId || "");
+
+  if (isRcAnonymousId(currentAppUserId)) {
+    await rememberPendingAnonymousAppUserId(currentAppUserId);
+  }
+
+  if (isRcAnonymousId(originalAppUserId)) {
+    await rememberPendingAnonymousAppUserId(originalAppUserId);
+  }
 
   return info;
 }
@@ -195,25 +311,37 @@ export async function isAnonymousUser(): Promise<boolean | null> {
  * Move RevenueCat from anonymous/guest identity to the real backend user.
  *
  * IMPORTANT:
- * The backend link_customer call should happen BEFORE this when a pending
- * $RCAnonymousID exists, so Rails can replay anonymous RevenueCat events.
+ * The backend guest attach/link_customer call should happen BEFORE this when a
+ * pending $RCAnonymousID exists, so Rails can attach/replay/verify anonymous
+ * RevenueCat events before RevenueCat changes to the real user id.
  */
 export async function rcIdentifyUser(
-  appUserId: string
+  appUserId: string,
 ): Promise<CustomerInfo | null> {
   try {
     const ok = await configureRevenueCat();
     if (!ok) return null;
 
-    const next = String(appUserId);
+    const next = String(appUserId || "").trim();
+    if (!next) return null;
+
     const current = await getCurrentAppUserId();
 
     if (isRcAnonymousId(current)) {
-      await rememberAnonymousAppUserId(current);
+      await rememberPendingAnonymousAppUserId(current);
     }
 
     if (current === next) {
-      return await Purchases.getCustomerInfo();
+      const info = await Purchases.getCustomerInfo();
+
+      console.log("[RC_FLOW] identify_skipped_already_current_user", {
+        appUserId: next,
+        originalAppUserId: info?.originalAppUserId,
+        activeKeys: Object.keys(info?.entitlements?.active ?? {}),
+        entitlementIdMatched: isProActive(info),
+      });
+
+      return info;
     }
 
     const result: any = await (Purchases as any).logIn(next);
@@ -223,6 +351,7 @@ export async function rcIdentifyUser(
 
     console.log("[RC_FLOW] login_success", {
       appUserId: next,
+      previousAppUserId: current,
       originalAppUserId: info?.originalAppUserId,
       activeKeys: Object.keys(info?.entitlements?.active ?? {}),
       entitlementIdMatched: isProActive(info),
@@ -247,22 +376,29 @@ export async function rcLogoutUser(): Promise<void> {
     const ok = await configureRevenueCat();
     if (!ok) return;
 
+    const currentBefore = await getCurrentAppUserId();
     const anonymous = await isAnonymousUser();
 
-    if (anonymous === true) {
-      const current = await getCurrentAppUserId();
-      await rememberAnonymousAppUserId(current);
+    if (anonymous === true || isRcAnonymousId(currentBefore)) {
+      await rememberPendingAnonymousAppUserId(currentBefore);
+
+      console.log("[RC_FLOW] logout_skipped_already_anonymous", {
+        appUserId: currentBefore,
+      });
+
       return;
     }
 
     const info = await Purchases.logOut();
-    const current = await getCurrentAppUserId();
+    const currentAfter = await getCurrentAppUserId();
 
-    configuredAppUserId = current;
-    await rememberAnonymousAppUserId(current);
+    configuredAppUserId = currentAfter;
+
+    await rememberPendingAnonymousAppUserId(currentAfter);
 
     console.log("[RC_FLOW] logged_out_to_anonymous", {
-      appUserId: current,
+      previousAppUserId: currentBefore,
+      appUserId: currentAfter,
       originalAppUserId: info?.originalAppUserId,
       activeKeys: Object.keys(info?.entitlements?.active ?? {}),
       entitlementIdMatched: isProActive(info),
@@ -285,13 +421,23 @@ export async function restorePurchases(): Promise<CustomerInfo> {
 
   const info = await Purchases.restorePurchases();
 
+  const currentAppUserId = await getCurrentAppUserId();
+  const originalAppUserId = String(info?.originalAppUserId || "");
+
   console.log("[RC_FLOW] restore_purchases", {
-    originalAppUserId: info?.originalAppUserId,
+    currentAppUserId,
+    originalAppUserId,
     activeKeys: Object.keys(info?.entitlements?.active ?? {}),
     entitlementIdMatched: isProActive(info),
   });
 
-  await rememberAnonymousAppUserId(info?.originalAppUserId);
+  if (isRcAnonymousId(currentAppUserId)) {
+    await rememberPendingAnonymousAppUserId(currentAppUserId);
+  }
+
+  if (isRcAnonymousId(originalAppUserId)) {
+    await rememberPendingAnonymousAppUserId(originalAppUserId);
+  }
 
   return info;
 }

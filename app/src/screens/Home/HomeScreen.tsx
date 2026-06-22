@@ -44,6 +44,7 @@ import {
   rcIdentifyUser,
   rcLogoutUser,
 } from "../../subscriptions/rcClient";
+import { rememberGuestRevenueCatCustomer } from "../../subscriptions/rememberGuestRevenueCatCustomer";
 import { useSubscription } from "../../subscriptions/useSubscription";
 import HomeSettingsMenu from "./components/HomeSettingsMenu";
 
@@ -1163,6 +1164,8 @@ export default function HomeScreen() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [accountSetupTarget, setAccountSetupTarget] =
     useState<AccountSetupTarget | null>(null);
+  const [devAttachLoading, setDevAttachLoading] = useState(false);
+  const [devAttachMessage, setDevAttachMessage] = useState<string | null>(null);
 
   const { width } = useWindowDimensions();
   const isNarrow = width < 380;
@@ -1339,6 +1342,9 @@ export default function HomeScreen() {
           const activeKeys = Object.keys(info?.entitlements?.active ?? {});
           const homePremium = homeHasPremiumEntitlement(info);
 
+          if (activeKeys.length > 0 || homePremium) {
+            await rememberGuestRevenueCatCustomer("home_logged_out_premium_detected");
+          }
 
           if (!cancelled) {
             const premiumFromKeys = activeKeys.length > 0 || homePremium;
@@ -1422,6 +1428,9 @@ export default function HomeScreen() {
           const activeKeys = Object.keys(info?.entitlements?.active ?? {});
           const homePremium = homeHasPremiumEntitlement(info);
 
+          if (!user?.id && (activeKeys.length > 0 || homePremium)) {
+            await rememberGuestRevenueCatCustomer("home_focus_logged_out_premium_detected");
+          }
 
           if (active) {
             const premiumFromKeys = activeKeys.length > 0 || homePremium;
@@ -1782,6 +1791,122 @@ export default function HomeScreen() {
     router.push("/(app)/subscription-privileges");
   };
 
+  const handleDevAttachRevenueCat = async () => {
+    if (devAttachLoading || isLoggingOut) return;
+
+    if (!currentUserId) {
+      Alert.alert("Sign in required", "Create or sign into an account first, then retry the attach.");
+      return;
+    }
+
+    try {
+      setDevAttachLoading(true);
+      setDevAttachMessage(null);
+
+      const token = await getAuthToken();
+      if (!token) {
+        throw new Error("No auth token found. Sign out and sign back in, then retry.");
+      }
+
+      console.log("🧪 [DEV_RC_ATTACH] started", { userId: currentUserId });
+
+      await rcIdentifyUser(currentUserId);
+      await sub?.refresh?.();
+
+      const info = await getCustomerInfo();
+      const infoAny = info as any;
+      const originalAppUserId = String(infoAny?.originalAppUserId || "").trim();
+      const activeKeys = Object.keys(infoAny?.entitlements?.active ?? {});
+
+      console.log("🧪 [DEV_RC_ATTACH] customer_info", {
+        currentAppUserId: infoAny?.appUserId,
+        originalAppUserId,
+        activeKeys,
+        allEntitlementKeys: Object.keys(infoAny?.entitlements?.all ?? {}),
+      });
+
+      if (!originalAppUserId) {
+        throw new Error("RevenueCat originalAppUserId is missing.");
+      }
+
+      const res = await postJson(
+        "/v1/revenuecat/link_customer",
+        { app_user_id: originalAppUserId },
+        token
+      );
+
+      const payload = (res as any)?.data || res || {};
+      const ok = (res as any)?.ok !== false;
+
+      console.log("🧪 [DEV_RC_ATTACH] backend_result", {
+        ok,
+        status: (res as any)?.status,
+        payload,
+      });
+
+      if (!ok) {
+        throw new Error(
+          String(
+            (payload as any)?.error ||
+              (res as any)?.error ||
+              "Backend attach request failed."
+          )
+        );
+      }
+
+      await sub?.refresh?.();
+      const freshInfo = await getCustomerInfo();
+      const freshInfoAny = freshInfo as any;
+      const freshActiveKeys = Object.keys(freshInfoAny?.entitlements?.active ?? {});
+      const premiumFromRevenueCat = homeHasPremiumEntitlement(freshInfoAny);
+
+      setHomeRcActiveEntitlementKeys(freshActiveKeys);
+      setHomeRcIsPro(premiumFromRevenueCat);
+      setHomeRcSeenPremium(premiumFromRevenueCat);
+      await writeHomeRcSeenPremium(premiumFromRevenueCat);
+
+      if (signIn) {
+        await signIn();
+      }
+
+      const replayed =
+        (payload as any)?.replayed === true ||
+        (payload as any)?.replay_result?.replayed === true;
+
+      const subscriptionActive =
+        (payload as any)?.subscription_active === true ||
+        (payload as any)?.subscriptionActive === true ||
+        (payload as any)?.support_subscription_active === true ||
+        (payload as any)?.supportSubscriptionActive === true;
+
+      const withoutExistingWebhook =
+        (payload as any)?.without_existing_webhook === true ||
+        (payload as any)?.withoutExistingWebhook === true ||
+        (payload as any)?.link_created_without_existing_webhook === true ||
+        (payload as any)?.linkCreatedWithoutExistingWebhook === true;
+
+      const message = `RC keys=${freshActiveKeys.length ? freshActiveKeys.join(", ") : "none"} | replayed=${String(
+        replayed
+      )} | backendActive=${String(subscriptionActive)} | noWebhook=${String(withoutExistingWebhook)}`;
+
+      setDevAttachMessage(message);
+
+      Alert.alert("DEV attach finished", message);
+    } catch (error: any) {
+      const message = error?.message || "Attach failed. Check Expo and Rails logs.";
+
+      console.log("🧪 [DEV_RC_ATTACH] failed", {
+        message,
+        error,
+      });
+
+      setDevAttachMessage(message);
+      Alert.alert("DEV attach failed", message);
+    } finally {
+      setDevAttachLoading(false);
+    }
+  };
+
   const handleGoToChangePassword = () => {
     if (isLoggingOut) return;
     setSettingsOpen(false);
@@ -2080,6 +2205,55 @@ export default function HomeScreen() {
 
                     <Text style={styles.premiumInfoButtonText}>View Premium</Text>
                   </Pressable>
+                </View>
+              )}
+
+              {__DEV__ && (
+                <View style={styles.devAttachCard}>
+                  <View style={styles.devAttachHeader}>
+                    <View style={styles.devAttachIcon}>
+                      <Ionicons name="bug" size={15} color={BRAND.blue} />
+                    </View>
+
+                    <Text style={styles.devAttachTitle}>Dev RevenueCat attach</Text>
+                  </View>
+
+                  <Text style={styles.devAttachBody}>
+                    Re-send the current RevenueCat customer to Rails without redoing signup.
+                  </Text>
+
+                  <Pressable
+                    onPress={handleDevAttachRevenueCat}
+                    disabled={isLoggingOut || devAttachLoading || !hasAccount}
+                    style={({ pressed }) => [
+                      styles.devAttachButton,
+                      pressed &&
+                        !isLoggingOut &&
+                        !devAttachLoading &&
+                        hasAccount &&
+                        styles.devAttachButtonPressed,
+                      (isLoggingOut || devAttachLoading || !hasAccount) &&
+                        styles.devAttachButtonDisabled,
+                    ]}
+                  >
+                    {devAttachLoading ? (
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                    ) : (
+                      <Ionicons name="git-merge" size={16} color="#FFFFFF" />
+                    )}
+
+                    <Text style={styles.devAttachButtonText}>
+                      {devAttachLoading
+                        ? "Attaching…"
+                        : hasAccount
+                          ? "DEV: Attach RevenueCat"
+                          : "DEV: Sign in first"}
+                    </Text>
+                  </Pressable>
+
+                  {!!devAttachMessage && (
+                    <Text style={styles.devAttachMessage}>{devAttachMessage}</Text>
+                  )}
                 </View>
               )}
             </View>
@@ -2456,6 +2630,85 @@ const styles = StyleSheet.create({
     fontFamily: FONT.medium,
     fontSize: IS_ANDROID ? 13 : 14,
     letterSpacing: 0.2,
+  },
+
+  devAttachCard: {
+    width: "100%",
+    borderRadius: 18,
+    paddingVertical: IS_ANDROID ? 12 : 14,
+    paddingHorizontal: 14,
+    backgroundColor: "#F8FAFC",
+    borderWidth: 1,
+    borderColor: "#CBD5E1",
+  },
+
+  devAttachHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+
+  devAttachIcon: {
+    width: 26,
+    height: 26,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: BRAND.blueBorder,
+  },
+
+  devAttachTitle: {
+    color: BRAND.text,
+    fontFamily: FONT.medium,
+    fontSize: IS_ANDROID ? 14 : 15,
+    letterSpacing: 0.2,
+  },
+
+  devAttachBody: {
+    marginTop: 8,
+    color: BRAND.muted,
+    fontFamily: FONT.regular,
+    fontSize: IS_ANDROID ? 12 : 13,
+    lineHeight: IS_ANDROID ? 17 : 18,
+  },
+
+  devAttachButton: {
+    marginTop: 11,
+    minHeight: 42,
+    borderRadius: 15,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: BRAND.blue,
+    borderWidth: 1,
+    borderColor: BRAND.blue,
+  },
+
+  devAttachButtonPressed: {
+    opacity: 0.88,
+    transform: [{ scale: 0.99 }],
+  },
+
+  devAttachButtonDisabled: {
+    opacity: 0.55,
+  },
+
+  devAttachButtonText: {
+    color: "#FFFFFF",
+    fontFamily: FONT.medium,
+    fontSize: IS_ANDROID ? 13 : 14,
+    letterSpacing: 0.2,
+  },
+
+  devAttachMessage: {
+    marginTop: 8,
+    color: BRAND.muted,
+    fontFamily: FONT.regular,
+    fontSize: 12,
+    lineHeight: 16,
   },
 
   iconPill: {
